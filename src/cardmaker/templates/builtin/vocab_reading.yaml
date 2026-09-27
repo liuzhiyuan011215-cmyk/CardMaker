@@ -1,0 +1,93 @@
+id: vocab_reading
+name: 单词 · 阅读材料
+icon: 📖
+order: 1
+description: 从文章、小说等阅读材料中，按学习者水平挑出生词和短语，结合原句语境释义。
+note_type: vocab
+dedup_key: word
+tags: ["CardMaker::单词"]
+
+# 用户可调的参数（界面上显示为选项）
+params:
+  level:
+    label: 学习者水平
+    default: TOPIK 4级
+    choices: ["TOPIK 2级", "TOPIK 3级", "TOPIK 4级", "TOPIK 5级", "TOPIK 6级",
+              "雅思 5分", "雅思 6分", "雅思 7分", "CEFR B1", "CEFR B2", "CEFR C1"]
+    description: 如 TOPIK 4级、雅思 6分、CEFR B2。只挑超出这个水平的词，数量由文本自己决定。
+  meaning_language:
+    label: 释义语言
+    default: 中文
+    choices: ["中文", "韩语", "英语"]
+  max_per_page:
+    label: 每页最多挑几个
+    type: int
+    default: 15
+  source_translation:
+    label: 翻译原句
+    type: bool
+    default: true
+  ai_example:
+    label: 另造 AI 例句
+    type: bool
+    default: true
+
+system_prompt: |
+  你是一位经验丰富的外语教师，擅长从真实的阅读材料中为学习者挑选值得记忆的单词和短语，制作 Anki 记忆卡片。
+  你只输出 json，不输出任何解释。
+
+user_prompt: |
+  学习者水平：{{ level }}
+  释义语言：{{ meaning_language }}
+
+  任务：从【本页正文】中挑出对这位学习者来说值得学习的单词和短语。
+
+  挑选规则：
+  1. 只挑超出学习者水平、或在本文中用法特殊的词；该水平已经掌握的基础词一律跳过。
+     数量完全由文本决定，宁缺毋滥，不要为了凑数而挑；每页最多 {{ max_per_page }} 个。
+  2. 除了单词，也挑有用的短语：惯用语、固定搭配、常用句型（如 "-기 마련이다"、"take into account"）。
+  3. 同一个词在本页出现多次只挑一次。
+  4. 【上一页末尾】只用来帮助理解上下文，不要从中挑词。
+
+  字段要求：
+  - word：词典形（原形）。韩语动词、形容词写成 "-다" 形式（如 방치되다），名词去掉助词；
+    英语写原形（如 alleviate）；短语和句型写成通用形式。
+  - surface：它在原文中实际出现的样子（如 방치되기），必须与原文一字不差。
+  - pos：词性简写。韩语词用：名、代、数、形、副、冠、感、依存名词，动词及物写"他"、不及物写"自"；
+    英语词用：n. / v. / adj. / adv. / prep.；短语写"短语"，句型写"句型"。
+  - meaning：结合原句语境的释义，用{{ meaning_language }}，简洁，最多两个义项，第一个义项必须是本句中的意思。
+  - source_sentence：word 所在的完整原句，必须从【本页正文】中原样复制，不能改动任何字符。
+
+  {{ output_format }}
+
+  【上一页末尾】
+  {{ context or "（无）" }}
+
+  【本页正文】（{{ book_title }}，第 {{ page_label }} 页{% if chapter %}，{{ chapter }}{% endif %}）
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [source_sentence]  # 防编造：原句必须能在本页原文中找到
+  fields:
+    word: {label: "单词", required: true, description: "词典形（原形）"}
+    surface: {label: "原文形式", description: "在原文中出现的形式，与原文完全一致"}
+    kind: {label: "类型", enum: [word, phrase], description: "word=单词，phrase=短语或句型"}
+    pos: {label: "词性", description: "词性简写"}
+    meaning: {label: "释义", required: true, description: "结合原句语境的释义"}
+    difficulty: {label: "难度", description: "难度估计，如 TOPIK 5级、CEFR C1"}
+    source_sentence: {label: "原句", required: true, description: "原句，从正文原样复制"}
+    source_translation: {label: "原句翻译", when: source_translation, description: "原句的翻译"}
+    example: {label: "AI 例句", when: ai_example, description: "用 word 新造的自然、地道的例句（原文语言），不要照抄原句"}
+    example_translation: {label: "例句翻译", when: ai_example, description: "新例句的翻译"}
+
+# 卡片字段映射：左边是 Anki 笔记字段，右边是 Jinja2 表达式
+card_fields:
+  Front: "{{ word }}"
+  Meaning: "{% if pos %}{{ pos }}：{% endif %}{{ meaning }}"
+  SourceSentence: "{{ source_sentence | highlight(surface or word) }}"
+  SourceTranslation: "{{ source_translation }}"
+  Example: "{{ example | highlight(word) }}"
+  ExampleTranslation: "{{ example_translation }}"
+  ExampleLabel: "{% if example %}AI 例句{% endif %}"
+  Source: "{{ source }}"

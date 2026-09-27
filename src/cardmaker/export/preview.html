@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>卡片预览 · {{ result.book_title }}</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --panel: #ffffff; --text: #333333; --muted: #7a7a7a; --line: #e3e3e3;
+    --box: #f4f4f4; --accent: #0a66c2; --warn: #b26a00; --tag: #eef3fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141518; --panel: #1f2025; --text: #e2e2e2; --muted: #9a9a9a; --line: #33343a;
+      --box: #2a2b31; --accent: #6aa9ff; --warn: #f0b35a; --tag: #26303f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: -apple-system, "PingFang SC", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  header, main { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+  header { padding-top: 24px; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .summary { font-size: 14px; color: var(--muted); line-height: 1.8; }
+  .toolbar { margin: 14px 0 16px; font-size: 14px; display: flex; gap: 16px; flex-wrap: wrap; }
+  main { display: grid; gap: 14px; padding-bottom: 48px; }
+  .card-row { display: grid; grid-template-columns: 1fr 1.6fr; background: var(--panel);
+              border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  @media (max-width: 720px) { .card-row { grid-template-columns: 1fr; } .back { border-left: none !important; border-top: 1px solid var(--line); } }
+  .side { padding: 18px 20px; text-align: center; font-size: 18px; }
+  .back { border-left: 1px solid var(--line); }
+  .side-title { font-size: 12px; color: var(--muted); text-align: left; margin-bottom: 10px; }
+  .front-word { font-size: 30px; font-weight: 600; margin: 18px 0 12px; }
+  .front-meaning { font-size: 20px; margin: 22px 0 12px; }
+  .back .front-word { font-size: 24px; margin: 4px 0 8px; }
+  .badges { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--tag); color: var(--muted); }
+  .badge.warn { color: var(--warn); }
+  hr { border: none; border-top: 1px dashed var(--line); margin: 12px 0; }
+  .sec { margin: 14px 0; }
+  .sec .label { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .sec .fl { font-size: 18px; line-height: 1.6; }
+  .sec .tr { font-size: 15px; color: var(--muted); line-height: 1.6; }
+  .sec b { color: var(--accent); }
+  .meaning-box { background: var(--box); border-radius: 8px; padding: 12px; font-size: 16px; margin-top: 14px; }
+  .source { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .dir-fwd .rev-only, .dir-rev .fwd-only { display: none; }
+  table.kv { width: 100%; text-align: left; font-size: 15px; border-collapse: collapse; }
+  table.kv td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.kv td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>卡片预览（{{ result.cards | length }} 张）</h1>
+  <div class="summary">{% for line in summary %}{{ line }}<br>{% endfor %}</div>
+  <div class="toolbar">
+    <span>正面显示：</span>
+    <label><input type="radio" name="dir" value="fwd" checked> 外语 → 释义（口头回答）</label>
+    <label><input type="radio" name="dir" value="rev"> 释义 → 外语（动笔写出）</label>
+  </div>
+</header>
+<main id="cards" class="dir-fwd">
+{% for card in result.cards %}
+  {% set f = card.fields %}
+  <section class="card-row">
+    <div class="side">
+      <div class="side-title">正面 · #{{ loop.index }} · p.{{ card.page_label }}</div>
+      {% if f.Front is defined and f.Meaning is defined %}
+      <div class="front-word fwd-only">{{ f.Front | safe }}</div>
+      <div class="front-meaning rev-only">{{ f.Meaning | safe }}</div>
+      {% else %}
+      <div class="front-word">{{ (f.values() | list | first) | safe }}</div>
+      {% endif %}
+      <div class="badges">
+        {% if card.data.kind %}<span class="badge">{{ '单词' if card.data.kind == 'word' else '短语/句型' }}</span>{% endif %}
+        {% if card.data.difficulty %}<span class="badge">{{ card.data.difficulty }}</span>{% endif %}
+        {% if card.grounding == 'approx' %}<span class="badge warn" title="原句与原文高度相似但不完全一致，多为 OCR 误差">≈ 近似匹配原文</span>{% endif %}
+      </div>
+    </div>
+    <div class="side back">
+      <div class="side-title">背面</div>
+      {% if f.Front is defined and f.Meaning is defined %}
+      <div class="front-word">{{ f.Front | safe }}</div>
+      <hr>
+      {% if f.SourceSentence %}
+      <div class="sec"><div class="label">📖 原文</div><div class="fl">{{ f.SourceSentence | safe }}</div>
+        {% if f.SourceTranslation %}<div class="tr">{{ f.SourceTranslation | safe }}</div>{% endif %}</div>
+      {% endif %}
+      {% if f.Example %}
+      <div class="sec"><div class="label">{{ '📘' if f.ExampleLabel == '教材例句' else '🤖' }} {{ f.ExampleLabel }}</div>
+        <div class="fl">{{ f.Example | safe }}</div>
+        {% if f.ExampleTranslation %}<div class="tr">{{ f.ExampleTranslation | safe }}</div>{% endif %}</div>
+      {% endif %}
+      <div class="meaning-box"><strong>单词意思：</strong>{{ f.Meaning | safe }}</div>
+      <div class="source">{{ f.Source | safe }}</div>
+      {% else %}
+      <table class="kv">{% for name, value in f.items() %}<tr><td>{{ name }}</td><td>{{ value | safe }}</td></tr>{% endfor %}</table>
+      {% endif %}
+    </div>
+  </section>
+{% else %}
+  <p>没有生成卡片。</p>
+{% endfor %}
+</main>
+<script>
+  document.querySelectorAll('input[name="dir"]').forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      document.getElementById('cards').className = 'dir-' + radio.value;
+    });
+  });
+</script>
+</body>
+</html>
