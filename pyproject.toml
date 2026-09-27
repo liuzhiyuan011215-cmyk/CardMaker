@@ -20,6 +20,7 @@ dependencies = [
     "numpy",
     "pillow",
     "PySide6-Essentials>=6.7",
+    "genanki>=0.13",
 ]
 
 [project.optional-dependencies]

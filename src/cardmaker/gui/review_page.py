@@ -5,25 +5,31 @@ import dataclasses
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QFileDialog, QHBoxLayout, QHeaderView,
                                QLineEdit, QMessageBox, QPushButton, QRadioButton, QSplitter, QTableView,
                                QTextBrowser, QVBoxLayout, QWidget)
 
+from ..config import load_settings
 from ..export.preview import write_outputs
 from ..pipeline.result import Card, RunResult
 from ..templates.loader import Template
+from .anki_dialog import AnkiImportDialog
 from .widgets import label
 
 HIDDEN_FIELDS = {"surface"}  # 内部用的字段，不在表格里显示
 READ_ONLY_FIELDS = {"kind"}
 KIND_TEXT = {"word": "单词", "phrase": "短语/句型"}
+STATUS_COLORS = {"已导入": "#16a34a", "已存在": "#98a2b3", "失败": "#dc2626"}
 WIDE_FIELDS = {"source_sentence", "source_translation", "example", "example_translation", "book_example",
                "book_example_translation", "ai_example", "ai_example_translation"}
 
 
 class CardTableModel(QAbstractTableModel):
-    """表格数据：第 0 列是勾选框，其余列是模板输出的字段。编辑后自动重新生成卡片字段。"""
+    """表格数据：第 0 列是勾选框，中间是模板输出的字段，导入 Anki 后最后多一列「Anki」显示结果。
+
+    编辑字段后自动重新生成卡片内容。
+    """
 
     def __init__(self, cards: list[Card], template: Template, parent=None):
         super().__init__(parent)
@@ -32,12 +38,22 @@ class CardTableModel(QAbstractTableModel):
         # 只显示至少一张卡片有内容的字段（比如没勾「AI 例句」就不显示那一列）
         self.columns = [name for name in template.fields
                         if name not in HIDDEN_FIELDS and any(c.data.get(name) for c in cards)]
+        self.show_status = any(c.anki_status for c in cards)
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.cards)
 
     def columnCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self.columns) + 1
+        return 0 if parent.isValid() else len(self.columns) + 1 + int(self.show_status)
+
+    def is_status_column(self, column: int) -> bool:
+        return self.show_status and column == len(self.columns) + 1
+
+    def refresh_status(self) -> None:
+        """导入 Anki 之后调用：显示「Anki」结果列。"""
+        self.beginResetModel()
+        self.show_status = any(c.anki_status for c in self.cards)
+        self.endResetModel()
 
     def field_at(self, column: int) -> str:
         return self.columns[column - 1]
@@ -49,6 +65,8 @@ class CardTableModel(QAbstractTableModel):
             return section + 1
         if section == 0:
             return "导入"
+        if self.is_status_column(section):
+            return "Anki"
         name = self.field_at(section)
         return self.template.fields[name].label or name
 
@@ -59,6 +77,12 @@ class CardTableModel(QAbstractTableModel):
         if index.column() == 0:
             if role == Qt.ItemDataRole.CheckStateRole:
                 return Qt.CheckState.Checked if card.selected else Qt.CheckState.Unchecked
+            return None
+        if self.is_status_column(index.column()):
+            if role == Qt.ItemDataRole.DisplayRole:
+                return card.anki_status
+            if role == Qt.ItemDataRole.ForegroundRole:
+                return QColor(STATUS_COLORS.get(card.anki_status, "#1f2328"))
             return None
         name = self.field_at(index.column())
         value = str(card.data.get(name, "") or "")
@@ -74,7 +98,7 @@ class CardTableModel(QAbstractTableModel):
         card = self.cards[index.row()]
         if index.column() == 0 and role == Qt.ItemDataRole.CheckStateRole:
             card.selected = Qt.CheckState(value) == Qt.CheckState.Checked
-        elif index.column() > 0 and role == Qt.ItemDataRole.EditRole:
+        elif index.column() > 0 and not self.is_status_column(index.column()) and role == Qt.ItemDataRole.EditRole:
             card.data[self.field_at(index.column())] = str(value).strip()
             card.fields = self.template.render_card_fields(card.data, card.context)
         else:
@@ -86,6 +110,8 @@ class CardTableModel(QAbstractTableModel):
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if index.column() == 0:
             return flags | Qt.ItemFlag.ItemIsUserCheckable
+        if self.is_status_column(index.column()):
+            return flags
         if self.field_at(index.column()) not in READ_ONLY_FIELDS:
             flags |= Qt.ItemFlag.ItemIsEditable
         return flags
@@ -130,8 +156,7 @@ def preview_html(card: Card, reverse: bool) -> str:
     if f.get("SourceSentence"):
         section("📖 原文", f["SourceSentence"], f.get("SourceTranslation", ""))
     if f.get("Example"):
-        icon = "📘" if f.get("ExampleLabel") == "教材例句" else "🤖"
-        section(f"{icon} {f.get('ExampleLabel') or '例句'}", f["Example"], f.get("ExampleTranslation", ""))
+        section(f.get("ExampleLabel") or "例句", f["Example"], f.get("ExampleTranslation", ""))
     parts.append("<table width='100%' cellpadding='10' bgcolor='#f4f4f4'><tr><td>"
                  f"<span style='font-weight:600;'>单词意思：</span>{f['Meaning']}</td></tr></table>")
     if f.get("Source"):
@@ -221,25 +246,20 @@ class ReviewPage(QWidget):
         bottom.addWidget(self.export_button)
         self.anki_button = QPushButton("导入 Anki")
         self.anki_button.setObjectName("Primary")
-        self.anki_button.setEnabled(False)
-        self.anki_button.setToolTip("下一步开发：一键写入 Anki")
+        self.anki_button.clicked.connect(self._import_to_anki)
         bottom.addWidget(self.anki_button)
         layout.addLayout(bottom)
 
     # ------------------------------------------------------------------
     def set_result(self, result: RunResult, template: Template) -> None:
-        self.result = result
+        self.result, self.template = result, template
         self.model = CardTableModel(result.cards, template, self)
         self.model.dataChanged.connect(lambda *_: (self._update_count(), self._update_preview()))
         self.model.rowsRemoved.connect(lambda *_: (self._update_count(), self._update_preview()))
         self.proxy.setSourceModel(self.model)
         self.search.clear()
 
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.setColumnWidth(0, 56)
-        for col in range(1, self.model.columnCount()):
-            self.table.setColumnWidth(col, 260 if self.model.field_at(col) in WIDE_FIELDS else 120)
+        self._resize_columns()
 
         u = result.usage
         note = "（已取消，下面是取消前生成的卡片）" if result.cancelled else ""
@@ -267,10 +287,31 @@ class ReviewPage(QWidget):
         self.preview.setHtml(preview_html(card, self.reverse.isChecked()) if card else
                              "<p style='color:#98a2b3'>在左边点一张卡片，这里显示它的样子。</p>")
 
+    def _resize_columns(self) -> None:
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 56)
+        for col in range(1, self.model.columnCount()):
+            wide = not self.model.is_status_column(col) and self.model.field_at(col) in WIDE_FIELDS
+            self.table.setColumnWidth(col, 260 if wide else 120)
+
     def _update_count(self) -> None:
         if self.model:
-            self.count_label.setText(f"已勾选 {self.model.selected_count()} / {len(self.model.cards)} 张")
-            self.export_button.setEnabled(self.model.selected_count() > 0)
+            selected = self.model.selected_count()
+            self.count_label.setText(f"已勾选 {selected} / {len(self.model.cards)} 张")
+            self.export_button.setEnabled(selected > 0)
+            self.anki_button.setEnabled(selected > 0)
+
+    def _import_to_anki(self) -> None:
+        cards = self.selected_cards()
+        if not cards or not self.result:
+            return
+        dialog = AnkiImportDialog(self, cards, self.template, self.result.book_title, load_settings())
+        dialog.exec()
+        if dialog.report:
+            self.model.refresh_status()
+            self._resize_columns()
+            self.table.selectRow(0)
+            self.summary.setText(f"{self.summary.text()}\nAnki：{dialog.report.summary()}")
 
     def _select_all(self, selected: bool) -> None:
         if self.model:

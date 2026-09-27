@@ -12,6 +12,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from ..anki.connect import AnkiConnectError
 from ..config import Settings
 from ..llm.client import ChatModel, FatalLLMError, LLMClient, explain_error
 from ..pipeline.runner import GenerateOptions, run_generation
@@ -39,6 +40,9 @@ class BackgroundTask(QObject):
         try:
             result = self.work()
         except FatalLLMError as exc:
+            self.failed.emit(str(exc))
+        except AnkiConnectError as exc:  # 没开 Anki 之类的预期情况，记一行日志即可
+            log.info("Anki：%s", exc)
             self.failed.emit(str(exc))
         except Exception as exc:
             log.exception("后台任务失败")

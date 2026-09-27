@@ -17,6 +17,7 @@ class Card:
     grounding: str = "exact"  # exact：原文原样出现；approx：高度相似（多为 OCR 误差）
     context: dict = field(default_factory=dict)  # 出处等信息，编辑后重新映射字段时要用
     selected: bool = True  # 预览界面里是否勾选（只导入勾选的）
+    anki_status: str = ""  # 导入 Anki 后的结果：已导入 / 已存在 / 失败
 
 
 @dataclass

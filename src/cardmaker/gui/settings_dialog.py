@@ -108,13 +108,18 @@ class SettingsDialog(QDialog):
         self.test_button.setEnabled(False)
         self.test_result.setText("正在连接…")
         self._task = FunctionTask(lambda: check_connection(llm))
-        self._task.finished.connect(lambda msg: self._show_test_result(f"✅ {msg}"))
-        self._task.failed.connect(lambda msg: self._show_test_result(f"❌ {msg}"))
+        # 信号连到本窗口的方法（而不是 lambda），Qt 才会把它们排到界面线程执行
+        self._task.finished.connect(self._on_test_ok)
+        self._task.failed.connect(self._on_test_failed)
         self._task.start()
 
-    def _show_test_result(self, text: str) -> None:
+    def _on_test_ok(self, message: str) -> None:
         self.test_button.setEnabled(True)
-        self.test_result.setText(text)
+        self.test_result.setText(f"✅ {message}")
+
+    def _on_test_failed(self, message: str) -> None:
+        self.test_button.setEnabled(True)
+        self.test_result.setText(f"❌ {message}")
 
     def accept(self) -> None:
         self.settings.llm = self.form_llm_settings()

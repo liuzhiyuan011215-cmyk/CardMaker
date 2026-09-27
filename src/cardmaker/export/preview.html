@@ -88,7 +88,7 @@
         {% if f.SourceTranslation %}<div class="tr">{{ f.SourceTranslation | safe }}</div>{% endif %}</div>
       {% endif %}
       {% if f.Example %}
-      <div class="sec"><div class="label">{{ '📘' if f.ExampleLabel == '教材例句' else '🤖' }} {{ f.ExampleLabel }}</div>
+      <div class="sec"><div class="label">{{ f.ExampleLabel }}</div>
         <div class="fl">{{ f.Example | safe }}</div>
         {% if f.ExampleTranslation %}<div class="tr">{{ f.ExampleTranslation | safe }}</div>{% endif %}</div>
       {% endif %}

@@ -112,3 +112,55 @@ def test_wizard_navigation(app, make_pdf):
     window.options_page.page_to.setValue(3)
     assert window.options_page.collect()[2].pages == [2, 3]
     assert "预计处理 2 页" in window.options_page.estimate.text()
+
+
+# ---------------------------------------------------------------------- 导入 Anki 窗口
+from cardmaker.anki import AnkiConnect, AnkiUnavailable  # noqa: E402
+from cardmaker.gui.anki_dialog import AnkiImportDialog  # noqa: E402
+from test_anki import FakeAnki  # noqa: E402
+
+
+def make_word_card(template, word):
+    data = {"word": word, "kind": "word", "pos": "自", "meaning": "释义", "source_sentence": f"{word} 문장."}
+    return Card(template.render_card_fields(data, {"source": ""}), data, "1")
+
+
+def test_anki_dialog_imports_and_marks_cards(app, template):
+    fake = FakeAnki(existing_fronts={"방치되다"})
+    cards = [make_word_card(template, "확산되다"), make_word_card(template, "방치되다")]
+    dialog = AnkiImportDialog(None, cards, template, "书", Settings(), client=AnkiConnect(transport=fake),
+                              autostart=False)
+    dialog.start_check(background=False)
+    assert dialog.connected and dialog.import_button.isEnabled()
+    options = dialog.options()
+    assert options.forward and options.reverse and options.deck == "CardMaker::书"  # 默认两个方向都要
+
+    dialog.start_import(background=False)
+    assert [c.anki_status for c in cards] == ["已导入", "已存在"]
+    assert "已跳过" in dialog.result_label.text()
+    assert fake.added[0]["fields"]["CardReverse"] == "y"
+
+
+def test_anki_dialog_when_anki_is_closed(app, template, tmp_path):
+    def closed(url, payload, timeout):
+        raise AnkiUnavailable("连不上 Anki")
+
+    dialog = AnkiImportDialog(None, [make_word_card(template, "합의")], template, "书", Settings(),
+                              client=AnkiConnect(transport=closed), autostart=False)
+    dialog.start_check(background=False)
+    assert not dialog.connected and not dialog.import_button.isEnabled()
+    assert "AnkiConnect" in dialog.status.text() and dialog.retry.isVisibleTo(dialog)
+    path = dialog.export_to(tmp_path / "书.apkg", notify=False)  # 没开 Anki 也能导出 .apkg
+    assert path.stat().st_size > 0
+
+
+def test_table_shows_anki_status_after_import(app, template):
+    card = make_word_card(template, "합의")
+    model = CardTableModel([card], template)
+    before = model.columnCount()
+    card.anki_status = "已导入"
+    model.refresh_status()
+    assert model.columnCount() == before + 1
+    assert model.headerData(before, Qt.Orientation.Horizontal) == "Anki"
+    assert model.data(model.index(0, before)) == "已导入"
+    assert not model.flags(model.index(0, before)) & Qt.ItemFlag.ItemIsEditable
