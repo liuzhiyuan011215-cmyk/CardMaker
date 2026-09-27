@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QFrame, Q
 
 from ..config import app_home
 from ..ingest.pdf import PdfInfo, inspect_pdf
+from ..storage import TaskInfo
 from .widgets import DropZone, label
 
 # 演示用的示例文件（自己编写，无版权问题），方便没有现成 PDF 时直接试用
@@ -55,6 +56,7 @@ class PasteDialog(QDialog):
 
 class ImportPage(QWidget):
     next_requested = Signal()
+    resume_requested = Signal(int)  # 继续某个没做完的任务
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,6 +69,25 @@ class ImportPage(QWidget):
         layout.setSpacing(14)
         layout.addWidget(label("第一步：选择要做成卡片的文件", "PageTitle"))
         layout.addWidget(label("教材、单词书、小说、文章都可以，扫描版也行。", "Hint"))
+
+        # 上次没做完的任务（断点续传）
+        self._resume_id: int | None = None
+        self.resume_panel = QFrame()
+        self.resume_panel.setObjectName("Panel")
+        resume_row = QHBoxLayout(self.resume_panel)
+        resume_row.setContentsMargins(18, 12, 18, 12)
+        self.resume_text = label("", "", wrap=True)
+        resume_row.addWidget(self.resume_text, 1)
+        ignore = QPushButton("忽略")
+        ignore.setObjectName("Link")
+        ignore.clicked.connect(self.resume_panel.hide)
+        resume_row.addWidget(ignore)
+        resume_button = QPushButton("继续生成")
+        resume_button.setObjectName("Primary")
+        resume_button.clicked.connect(lambda: self._resume_id is not None and self.resume_requested.emit(self._resume_id))
+        resume_row.addWidget(resume_button)
+        self.resume_panel.hide()
+        layout.addWidget(self.resume_panel)
 
         self.drop = DropZone()
         self.drop.file_chosen.connect(self.set_file)
@@ -116,6 +137,17 @@ class ImportPage(QWidget):
         layout.addLayout(bottom)
 
     # ------------------------------------------------------------------
+    def show_unfinished(self, task: TaskInfo | None) -> None:
+        """显示「上次的任务还没做完」提醒；task 为 None 时隐藏。"""
+        self._resume_id = task.id if task else None
+        if task is None:
+            self.resume_panel.hide()
+            return
+        self.resume_text.setText(
+            f"⏸  上次的任务还没做完：《{task.book_title}》已完成 {task.chunks_ok}/{task.chunks_total} 页，"
+            f"已生成 {task.cards} 张卡片。点「继续生成」从中断的地方接着做，已完成的页不会重复花 token。")
+        self.resume_panel.show()
+
     def browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "选择文件", str(Path.home()),
                                               "PDF 或文本文件 (*.pdf *.txt *.md)")

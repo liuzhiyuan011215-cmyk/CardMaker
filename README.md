@@ -26,13 +26,17 @@ python3 -m venv .venv
 
 1. **选择文件**：把 PDF / 文本拖进窗口，或点「用示例文件试试」；程序会自动判断文字版还是扫描版
 2. **选择用途**：选模板（阅读材料挑生词 / 单词书整本收录），选学习者水平、页码范围、最多生成多少张
-3. **生成卡片**：显示进度、已用时间、预计剩余时间，可随时取消（已生成的卡片会保留）
+3. **生成卡片**：同时处理多页（默认 5 页，可在设置里调），显示进度、已用时间、预计剩余时间，可随时取消
 4. **检查并导入**：表格里勾选、直接编辑、删除、搜索；右侧实时预览卡片正反面；
    点「导入 Anki」选牌组和方向（外语→释义 / 释义→外语 / 两个都要）即可写入 Anki
 
 导入 Anki 需要 Anki 已打开并安装 AnkiConnect 插件（工具 → 插件 → 获取插件，代码 `2055492159`）。
 程序会自动创建牌组和「CardMaker 单词」笔记类型；Anki 里已有的卡片自动跳过；只新增，不修改或删除任何已有内容。
 没开 Anki 时可以导出 `.apkg` 文件，双击即可导入。
+
+**断点续传与历史记录**：每一页处理完都会立即存进本地数据库。程序崩溃、断网、Key 出错或手动取消后，
+第一步页面会提示「上次的任务还没做完」，点「继续生成」只处理没完成的页，已完成的页不会重复花 token。
+右上角「📜 历史」可以打开以前生成的卡片（包括当时的修改和导入 Anki 的结果）。
 
 配置（含 API Key）保存在 `~/Library/Application Support/CardMaker/config.yaml`，不在项目目录里，不会进 git。
 日志在同目录的 `logs/cardmaker.log`。
@@ -47,6 +51,8 @@ python3 -m venv .venv
 .venv/bin/cardmaker templates list                                    # 查看模板
 .venv/bin/cardmaker generate samples/demo/korean_reading.pdf -t vocab_reading --level "TOPIK 4级"
 .venv/bin/cardmaker generate samples/demo/vocab_book_scan.pdf -t vocab_book --max-cards 20
+.venv/bin/cardmaker tasks                  # 查看历史任务
+.venv/bin/cardmaker resume 3               # 继续 3 号任务（只处理没完成或失败的页）
 ```
 
 结果保存在 `output/<文件名>-<模板>-<时间>/`：`cards.html`（预览网页）、`cards.json`（卡片数据）、`summary.txt`（用量统计）。
@@ -59,7 +65,10 @@ python3 -m venv .venv
 - **模板 = 提示词 + 输出结构 + 字段映射**：每个模板一个 YAML 文件（`src/cardmaker/templates/builtin/`），
   输出结构在运行时生成 pydantic 模型做校验，用户选项可以增减要生成的内容。
 - **防编造**：模型给出的原句、书上例句必须能在原文中找到（允许 OCR 造成的细微差异），找不到的直接丢弃。
-- **失败隔离**：输出不合格会把错误告诉模型让它重试，最多 3 次；仍失败只标记这一页，不影响其他页。
+- **并发 + 失败隔离**：线程池同时处理多页；调用失败按指数退避重试（2、4、8 秒，最多 3 次），输出不合格会把错误
+  告诉模型让它改；仍失败只标记这一页，不影响其他页。Key 错误等致命错误会立即停止，修好后续传。
+- **断点续传**：SQLite 保存任务、每一页的处理结果和卡片；无论哪页先完成，最后都按书中顺序做原文校验、
+  去重（保留首次出现）和数量截断，结果与逐页顺序处理完全一致。
 - **核心与界面分离**：`cardmaker` 的核心包不依赖界面；`cardmaker/gui/` 只负责展示和交互，
   耗时操作在后台线程运行，界面不会卡住。
 
@@ -76,6 +85,7 @@ python3 -m venv .venv
 src/cardmaker/
   cli.py                命令行入口
   config.py / log.py    配置（含 API Key）与日志
+  storage.py            SQLite 任务存储（断点续传、历史记录）
   ingest/               导入：pdf.py（文字层 + OCR 兜底）、ocr/（OCR 接口与融合实现）
   llm/                  OpenAI 兼容客户端、JSON 解析
   templates/            模板加载器 + builtin/*.yaml 内置模板
@@ -92,7 +102,7 @@ samples/demo/           自己编写的演示样本（无版权问题）；sampl
 
 1. ✅ 项目骨架 + 命令行核心流程（PDF → 文字/OCR → 单词模板 → JSON 校验 → 输出卡片）
 2. ✅ AnkiConnect 写入 + .apkg 导出
-3. SQLite 任务存储 + 断点续传 + 并发与重试
+3. ✅ SQLite 任务存储 + 断点续传 + 并发与重试 + 历史记录
 4. ✅ 桌面界面（PySide6）：四步向导（为了尽早演示，提前到第二阶段之前完成）
 5. 其他领域模板 + 读书笔记导入（RIDI、Kindle 等）
 6. TTS 发音（百炼 TTS）

@@ -129,6 +129,34 @@ def cmd_templates(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- tasks / resume
+def cmd_tasks(args) -> int:
+    from .storage import TaskStore, status_text
+
+    tasks = TaskStore().list_tasks(limit=args.limit)
+    if not tasks:
+        print("还没有任何任务。")
+    for t in tasks:
+        print(f"#{t.id:<4} {t.created_at}  《{t.book_title}》 {t.template_id}  "
+              f"{t.chunks_ok}/{t.chunks_total} 页  {t.cards} 张  {t.total_tokens:,} token  {status_text(t)}")
+    return 0
+
+
+def cmd_resume(args) -> int:
+    from .config import load_settings
+    from .llm.client import LLMClient
+    from .pipeline.runner import resume_task
+    from .storage import TaskStore
+
+    settings = load_settings()
+    if not settings.llm.api_key:
+        print("还没有设置 API Key，请先运行：cardmaker config set-key")
+        return 1
+    result = resume_task(TaskStore(), args.task_id, LLMClient.from_settings(settings.llm),
+                         progress=lambda event: print(event.message, file=sys.stderr))
+    return finish_run(result, args)
+
+
 # ---------------------------------------------------------------- generate
 def cmd_generate(args) -> int:
     from .config import load_settings, mask_key
@@ -150,13 +178,19 @@ def cmd_generate(args) -> int:
 
     options = GenerateOptions(pages=parse_pages(args.pages), max_cards=args.max_cards,
                               ocr_mode=args.ocr, ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi,
-                              book_title=args.title)
+                              book_title=args.title, concurrency=args.concurrency or settings.concurrency)
     llm = LLMClient.from_settings(settings.llm)
     print(f"模型：{settings.llm.model}（{settings.llm.base_url}，Key {mask_key(settings.llm.api_key)}）",
           file=sys.stderr)
 
     result = run_generation(Path(args.input), template, params, llm, options,
                             progress=lambda event: print(event.message, file=sys.stderr))
+    return finish_run(result, args)
+
+
+def finish_run(result, args) -> int:
+    from .export.preview import write_outputs
+
     out_dir = write_outputs(result, Path(args.out))
     preview = (out_dir / "cards.html").resolve()
     print("\n" + result.summary_text())
@@ -201,8 +235,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ocr", choices=["auto", "always", "never"], default="auto", help=ocr_help)
     p.add_argument("--set", action="append", metavar="KEY=VALUE", help="模板参数，可重复")
     p.add_argument("-o", "--out", default="output", help="输出目录（默认 output/）")
+    p.add_argument("--concurrency", type=int, default=0, help="同时处理几页（默认用设置里的值）")
     p.add_argument("--no-open", action="store_true", help="生成后不自动在浏览器打开预览页")
     p.set_defaults(func=cmd_generate)
+
+    p = sub.add_parser("tasks", help="查看历史任务（断点续传用）")
+    p.add_argument("--limit", type=int, default=20)
+    p.set_defaults(func=cmd_tasks)
+
+    p = sub.add_parser("resume", help="继续一个没做完的任务（只处理没完成或失败的页）")
+    p.add_argument("task_id", type=int)
+    p.add_argument("-o", "--out", default="output", help="输出目录（默认 output/）")
+    p.add_argument("--no-open", action="store_true", help="完成后不自动在浏览器打开预览页")
+    p.set_defaults(func=cmd_resume)
     return parser
 
 

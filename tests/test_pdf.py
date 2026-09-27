@@ -70,11 +70,10 @@ def test_force_ocr(make_pdf):
 def test_chunks_skip_short_pages_and_carry_context(make_pdf):
     path = make_pdf(["第一页：" + "内容" * 30 + "上一页的结尾句。", "短", "第三页：" + "正文" * 30])
     doc = extract_pdf(path, ocr_mode="never")
-    chunks, skipped = make_chunks(doc, min_chars=10, context_chars=20)
-    assert [c.page_label for c in chunks] == ["1", "3"]
-    assert [p.label for p in skipped] == ["2"]
+    chunks = make_chunks(doc, min_chars=10, context_chars=20)
+    assert [(c.page_label, c.skip_reason) for c in chunks] == [("1", ""), ("2", "字数太少"), ("3", "")]
     assert chunks[0].context == ""
-    assert chunks[1].context.endswith("上一页的结尾句。")
+    assert chunks[2].context.endswith("上一页的结尾句。")  # 跳过的页不影响上下文衔接
 
 
 def test_tail_and_split_long():

@@ -23,7 +23,7 @@ class Card:
 @dataclass
 class ChunkOutcome:
     page_label: str
-    status: str  # ok / failed / skipped
+    status: str  # ok / failed / skipped / pending（取消后尚未处理）
     attempts: int = 0
     raw_items: int = 0  # 模型返回的条数
     invalid: int = 0  # 其中格式不合格被丢弃的条数
@@ -47,6 +47,7 @@ class RunResult:
     elapsed: float = 0.0
     stopped_early: bool = False
     cancelled: bool = False
+    task_id: int | None = None  # 数据库里的任务编号（断点续传、历史记录用）
 
     def count(self, status: str) -> int:
         return sum(1 for c in self.chunks if c.status == status)
@@ -54,8 +55,9 @@ class RunResult:
     def summary_lines(self) -> list[str]:
         level = self.params.get("level")
         lines = [f"《{self.book_title}》 · 模板「{self.template_name}」" + (f" · 水平 {level}" if level else "")]
+        pending = f"，未处理 {self.count('pending')}（可继续）" if self.count("pending") else ""
         lines.append(f"页面：共选 {self.pages_selected} 页，成功 {self.count('ok')}，失败 {self.count('failed')}，"
-                     f"跳过 {self.count('skipped')}")
+                     f"跳过 {self.count('skipped')}{pending}")
         kinds = Counter(c.data.get("kind") for c in self.cards if c.data.get("kind"))
         kind_text = "、".join(f"{'单词' if k == 'word' else '短语/句型'} {n}" for k, n in kinds.items())
         drop_text = "，".join(f"{reason} {n}" for reason, n in self.dropped.items())

@@ -166,7 +166,8 @@ class OptionsPage(QWidget):
         params = {name: getter() for name, getter in self._getters.items()}
         settings = load_settings()
         options = GenerateOptions(pages=self.selected_pages(), max_cards=self.max_cards.value(),
-                                  ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi)
+                                  ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi,
+                                  concurrency=settings.concurrency)
         return self.template, params, options
 
     # ------------------------------------------------------------------

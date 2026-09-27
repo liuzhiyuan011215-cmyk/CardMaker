@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..ingest.pdf import DocumentText, PageText
+from ..ingest.pdf import DocumentText
 
 
 @dataclass
@@ -13,6 +13,7 @@ class Chunk:
     text: str
     context: str  # 上一页末尾，只帮助模型理解（跨页的句子、上一页的条款号），不从中出卡
     method: str  # 文字层 / OCR
+    skip_reason: str = ""  # 非空表示这一页不处理（例如字太少）
 
 
 def visible_len(text: str) -> int:
@@ -48,16 +49,15 @@ def split_long(text: str, max_chars: int) -> list[str]:
 
 
 def make_chunks(doc: DocumentText, min_chars: int = 30, context_chars: int = 200,
-                max_chars: int = 5000) -> tuple[list[Chunk], list[PageText]]:
-    """返回 (要处理的块, 因为字太少而跳过的页)。"""
+                max_chars: int = 5000) -> list[Chunk]:
+    """按书中顺序返回所有分块；字太少的页也在列表里，但标了 skip_reason，不会交给模型。"""
     chunks: list[Chunk] = []
-    skipped: list[PageText] = []
     previous = ""
     for page in doc.pages:
         if visible_len(page.text) < min_chars:
-            skipped.append(page)
+            chunks.append(Chunk(page.label, page.chapter, page.text, "", page.method, skip_reason="字数太少"))
             continue
         for part in split_long(page.text, max_chars):
             chunks.append(Chunk(page.label, page.chapter, part, tail(previous, context_chars), page.method))
             previous = part
-    return chunks, skipped
+    return chunks

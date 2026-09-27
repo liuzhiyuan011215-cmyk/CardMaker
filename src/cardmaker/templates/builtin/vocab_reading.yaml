@@ -78,7 +78,7 @@ output:
     difficulty: {label: "难度", description: "难度估计，如 TOPIK 5级、CEFR C1"}
     source_sentence: {label: "原句", required: true, description: "原句，从正文原样复制"}
     source_translation: {label: "原句翻译", when: source_translation, description: "原句的翻译"}
-    example: {label: "AI 例句", when: ai_example, description: "用 word 新造的自然、地道的例句（原文语言），不要照抄原句"}
+    example: {label: "AI 例句", when: ai_example, description: "用 word 本身新造一个母语者日常会说的自然例句（原文语言）：可以变形，但不能换成被动、使动等别的词，也不要照抄原句"}
     example_translation: {label: "例句翻译", when: ai_example, description: "新例句的翻译"}
 
 # 卡片字段映射：左边是 Anki 笔记字段，右边是 Jinja2 表达式

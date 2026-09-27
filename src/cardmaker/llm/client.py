@@ -73,9 +73,10 @@ class LLMClient:
 
     @classmethod
     def from_settings(cls, settings: LLMSettings) -> "LLMClient":
+        # 重试策略由生成流程统一控制（指数退避，最多 3 次），SDK 自己不再重试，避免重试次数叠加
         return cls(settings.base_url, settings.api_key, settings.model, json_mode=settings.json_mode,
                    temperature=settings.temperature, timeout=settings.timeout,
-                   extra_body=settings.extra_body)
+                   extra_body=settings.extra_body, max_retries=0)
 
     def chat(self, messages: list[dict]) -> tuple[str, Usage]:
         kwargs: dict = {"model": self.model, "messages": messages, "temperature": self.temperature}

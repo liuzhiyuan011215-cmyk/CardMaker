@@ -4,7 +4,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QUrl, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QFileDialog, QHBoxLayout, QHeaderView,
                                QLineEdit, QMessageBox, QPushButton, QRadioButton, QSplitter, QTableView,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QFileDialog, QHB
 from ..config import load_settings
 from ..export.preview import write_outputs
 from ..pipeline.result import Card, RunResult
+from ..storage import TaskStore
 from ..templates.loader import Template
 from .anki_dialog import AnkiImportDialog
 from .widgets import label
@@ -172,6 +173,12 @@ class ReviewPage(QWidget):
         self.setObjectName("Page")
         self.result: RunResult | None = None
         self.model: CardTableModel | None = None
+        self.store: TaskStore | None = None
+        # 修改、勾选、删除后稍等片刻自动存进数据库（历史记录里再打开还在）
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(600)
+        self._save_timer.timeout.connect(self.save)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 28, 40, 28)
@@ -251,11 +258,13 @@ class ReviewPage(QWidget):
         layout.addLayout(bottom)
 
     # ------------------------------------------------------------------
-    def set_result(self, result: RunResult, template: Template) -> None:
-        self.result, self.template = result, template
+    def set_result(self, result: RunResult, template: Template, store: TaskStore | None = None) -> None:
+        self.result, self.template, self.store = result, template, store
         self.model = CardTableModel(result.cards, template, self)
-        self.model.dataChanged.connect(lambda *_: (self._update_count(), self._update_preview()))
-        self.model.rowsRemoved.connect(lambda *_: (self._update_count(), self._update_preview()))
+        self.model.dataChanged.connect(lambda *_: (self._update_count(), self._update_preview(),
+                                                   self._save_timer.start()))
+        self.model.rowsRemoved.connect(lambda *_: (self._update_count(), self._update_preview(),
+                                                   self._save_timer.start()))
         self.proxy.setSourceModel(self.model)
         self.search.clear()
 
@@ -271,6 +280,10 @@ class ReviewPage(QWidget):
         if result.cards:
             self.table.selectRow(0)
         self._update_preview()
+
+    def save(self) -> None:
+        if self.store and self.result and self.result.task_id is not None:
+            self.store.save_cards(self.result.task_id, self.result.cards)
 
     def selected_cards(self) -> list[Card]:
         return [c for c in (self.result.cards if self.result else []) if c.selected]
@@ -308,6 +321,7 @@ class ReviewPage(QWidget):
         dialog = AnkiImportDialog(self, cards, self.template, self.result.book_title, load_settings())
         dialog.exec()
         if dialog.report:
+            self.save()  # 记住哪些已经导入过
             self.model.refresh_status()
             self._resize_columns()
             self.table.selectRow(0)

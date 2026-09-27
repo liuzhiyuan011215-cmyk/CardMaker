@@ -15,7 +15,8 @@ from PySide6.QtCore import QObject, Signal
 from ..anki.connect import AnkiConnectError
 from ..config import Settings
 from ..llm.client import ChatModel, FatalLLMError, LLMClient, explain_error
-from ..pipeline.runner import GenerateOptions, run_generation
+from ..pipeline.runner import GenerateOptions, resume_task, run_generation
+from ..storage import TaskStore
 from ..templates.loader import Template
 
 log = logging.getLogger(__name__)
@@ -68,18 +69,31 @@ class FunctionTask(BackgroundTask):
 class GenerateWorker(BackgroundTask):
     progress = Signal(object)  # ProgressEvent
 
-    def __init__(self, input_path: Path, template: Template, params: dict, options: GenerateOptions,
-                 settings: Settings, llm: ChatModel | None = None):
+    def __init__(self, input_path: Path | None, template: Template | None, params: dict,
+                 options: GenerateOptions | None, settings: Settings, llm: ChatModel | None = None,
+                 store: TaskStore | None = None):
         super().__init__()
         self.input_path, self.template, self.params = input_path, template, params
-        self.options, self.settings, self.llm = options, settings, llm
+        self.options, self.settings, self.llm, self.store = options, settings, llm, store
+        self.resume_task_id: int | None = None
         self._cancel = threading.Event()
+
+    @classmethod
+    def for_resume(cls, task_id: int, settings: Settings, llm: ChatModel | None = None,
+                   store: TaskStore | None = None) -> "GenerateWorker":
+        """断点续传：继续处理某个任务里没完成的页。"""
+        worker = cls(None, None, {}, None, settings, llm=llm, store=store)
+        worker.resume_task_id = task_id
+        return worker
 
     def cancel(self) -> None:
         self._cancel.set()
 
     def work(self):
         llm = self.llm or LLMClient.from_settings(self.settings.llm)
-        # 取消时 run_generation 会返回已生成的部分，而不是抛异常
+        store = self.store or TaskStore()
+        # 取消时会返回已生成的部分（任务保存在数据库里，之后可以继续），而不是抛异常
+        if self.resume_task_id is not None:
+            return resume_task(store, self.resume_task_id, llm, progress=self.progress.emit, cancel=self._cancel)
         return run_generation(self.input_path, self.template, self.params, llm, self.options,
-                              progress=self.progress.emit, cancel=self._cancel)
+                              progress=self.progress.emit, cancel=self._cancel, store=store)

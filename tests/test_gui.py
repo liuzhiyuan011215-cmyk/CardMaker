@@ -164,3 +164,69 @@ def test_table_shows_anki_status_after_import(app, template):
     assert model.headerData(before, Qt.Orientation.Horizontal) == "Anki"
     assert model.data(model.index(0, before)) == "已导入"
     assert not model.flags(model.index(0, before)) & Qt.ItemFlag.ItemIsEditable
+
+
+# ---------------------------------------------------------------------- 历史记录与断点续传
+from cardmaker.gui.history_dialog import HistoryDialog  # noqa: E402
+from cardmaker.pipeline.runner import run_generation  # noqa: E402
+from cardmaker.storage import TaskStore  # noqa: E402
+from test_resume import S1, S2, PageFakeLLM, reply  # noqa: E402
+
+
+@pytest.fixture
+def cancelled_task(tmp_path, make_pdf, template):
+    """一个取消在第 1 页之后的任务：第 1 页有卡片，第 2 页没处理。"""
+    import threading
+
+    store = TaskStore(tmp_path / "gui.db")
+    pdf = make_pdf([f"PAGE1 {S1}", f"PAGE2 {S2}"])
+    cancel = threading.Event()
+    llm = PageFakeLLM({"PAGE1": reply(("확산되다", S1)), "PAGE2": reply(("방치되다", S2))})
+    result = run_generation(pdf, template, {}, llm, GenerateOptions(min_chars=5),
+                            progress=lambda e: e.stage == "generate" and e.done == 1 and cancel.set(),
+                            cancel=cancel, store=store)
+    return store, result.task_id
+
+
+def test_history_dialog_buttons(app, cancelled_task):
+    store, task_id = cancelled_task
+    dialog = HistoryDialog(None, store)
+    assert dialog.table.rowCount() == 1 and "可继续" in dialog.table.item(0, 6).text()
+    assert dialog.open_button.isEnabled() and dialog.resume_button.isEnabled()
+    resumed = []
+    dialog.resume_requested.connect(resumed.append)
+    dialog._resume()
+    assert resumed == [task_id]
+
+
+def test_resume_banner_and_open_task(app, cancelled_task):
+    store, task_id = cancelled_task
+    window = MainWindow(store)
+    assert window.import_page.resume_panel.isVisibleTo(window.import_page)
+    assert "1/2 页" in window.import_page.resume_text.text()
+
+    window.open_task(task_id)
+    assert window.stack.currentIndex() == 3
+    assert [c.fields["Front"] for c in window.review_page.result.cards] == ["확산되다"]
+
+
+def test_review_edits_are_saved(app, cancelled_task):
+    store, task_id = cancelled_task
+    window = MainWindow(store)
+    window.open_task(task_id)
+    page = window.review_page
+    page.model.setData(page.model.index(0, page.model.columns.index("meaning") + 1), "扩散，蔓延")
+    page.save()  # 平时由定时器在修改后自动触发
+    assert store.load_cards(task_id)[0].fields["Meaning"] == "扩散，蔓延"
+
+
+def test_worker_resumes_task(app, cancelled_task):
+    store, task_id = cancelled_task
+    llm = PageFakeLLM({"PAGE1": reply(), "PAGE2": reply(("방치되다", S2))})
+    worker = GenerateWorker.for_resume(task_id, Settings(), llm=llm, store=store)
+    results = []
+    worker.finished.connect(results.append)
+    worker.run()
+    assert llm.calls == ["PAGE2"]
+    assert [c.fields["Front"] for c in results[0].cards] == ["확산되다", "방치되다"]
+    assert not store.get_task(task_id).unfinished

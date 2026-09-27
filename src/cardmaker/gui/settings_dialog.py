@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-                               QLineEdit, QPushButton, QVBoxLayout)
+                               QLineEdit, QPushButton, QSpinBox, QVBoxLayout)
 
 from ..config import LLM_PRESETS, LLMSettings, clean_pasted_key, load_settings, mask_key, save_settings
 from ..llm.client import check_connection
@@ -57,6 +57,12 @@ class SettingsDialog(QDialog):
         self.language.addItems(LANGUAGES)
         self.language.setCurrentText(self.settings.meaning_language)
         form.addRow("释义默认用", self.language)
+        self.concurrency = QSpinBox()
+        self.concurrency.setRange(1, 10)
+        self.concurrency.setValue(self.settings.concurrency)
+        self.concurrency.setSuffix(" 页")
+        self.concurrency.setToolTip("越大越快；如果经常提示「请求太频繁」，就调小一点")
+        form.addRow("同时处理", self.concurrency)
         layout.addLayout(form)
         layout.addWidget(label("API Key 只保存在这台电脑上（~/Library/Application Support/CardMaker），"
                                "不会上传到除大模型平台以外的任何地方。", "Hint", wrap=True))
@@ -124,5 +130,6 @@ class SettingsDialog(QDialog):
     def accept(self) -> None:
         self.settings.llm = self.form_llm_settings()
         self.settings.meaning_language = self.language.currentText()
+        self.settings.concurrency = self.concurrency.value()
         save_settings(self.settings)
         super().accept()
