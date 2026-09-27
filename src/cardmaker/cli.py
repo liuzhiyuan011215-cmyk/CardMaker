@@ -178,7 +178,8 @@ def cmd_generate(args) -> int:
 
     options = GenerateOptions(pages=parse_pages(args.pages), max_cards=args.max_cards,
                               ocr_mode=args.ocr, ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi,
-                              book_title=args.title, concurrency=args.concurrency or settings.concurrency)
+                              book_title=args.title, concurrency=args.concurrency or settings.concurrency,
+                              source=template.source, notes_book=args.book)
     llm = LLMClient.from_settings(settings.llm)
     print(f"模型：{settings.llm.model}（{settings.llm.base_url}，Key {mask_key(settings.llm.api_key)}）",
           file=sys.stderr)
@@ -236,6 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set", action="append", metavar="KEY=VALUE", help="模板参数，可重复")
     p.add_argument("-o", "--out", default="output", help="输出目录（默认 output/）")
     p.add_argument("--concurrency", type=int, default=0, help="同时处理几页（默认用设置里的值）")
+    p.add_argument("--book", help="读书笔记里有多本书时，只处理这一本")
     p.add_argument("--no-open", action="store_true", help="生成后不自动在浏览器打开预览页")
     p.set_defaults(func=cmd_generate)
 

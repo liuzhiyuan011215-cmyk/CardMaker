@@ -123,3 +123,48 @@ def test_find_term(text, term, expected):
 
 def test_highlight_escapes_html():
     assert str(highlight("<i>x</i> word", "word")) == "&lt;i&gt;x&lt;/i&gt; <b>word</b>"
+
+
+# ---------------------------------------------------------------------- 各领域模板
+from cardmaker.templates.loader import list_groups  # noqa: E402
+
+
+def test_all_templates_render():
+    for tpl in list_templates():
+        params = tpl.resolve_params({})
+        messages = tpl.build_messages({**params, "text": "正文", "context": "", "page_label": "1",
+                                       "chapter": "", "book_title": "书"})
+        assert "正文" in messages[1]["content"] and "json" in messages[1]["content"], tpl.id
+
+
+def test_groups_and_variants():
+    groups = {g.id: [v.variant for v in g.variants] for g in list_groups()}
+    assert groups["law"] == ["填空卡", "选择题"] and groups["notes"] == ["填空卡", "选择题"]
+    assert list(groups)[:3] == ["vocab_reading", "vocab_book", "notes"]
+
+
+def test_cloze_template_requires_blank():
+    law = load_template("law_cloze")
+    bad = json.dumps({"items": [{"text": "借期为三十日。", "quote": "借期为三十日。"}]}, ensure_ascii=False)
+    with pytest.raises(OutputError):
+        law.parse_output(bad)
+    good = json.dumps({"items": [{"text": "借期为{{c1::三十日}}。", "quote": "借期为三十日。", "article": "第三条"}]},
+                      ensure_ascii=False)
+    items, _ = law.parse_output(good)
+    fields = law.render_card_fields(items[0], {"source": "《规定》 · p.1"})
+    assert fields["Text"] == "借期为{{c1::三十日}}。" and fields["Source"] == "《规定》 · p.1 · 第三条"
+
+
+def test_mcq_template_requires_three_distractors():
+    mcq = load_template("law_mcq")
+    bad = json.dumps({"items": [{"question": "借期？", "correct": "三十日", "distractors": ["十日"], "quote": "q"}]},
+                     ensure_ascii=False)
+    with pytest.raises(OutputError):
+        mcq.parse_output(bad)
+
+
+def test_code_block_keeps_indentation():
+    code = load_template("code_cloze")
+    fields = code.render_card_fields({"text": "用 {{c1::sorted}} 排序", "code": "for x in nums:\n    print(x)",
+                                      "quote": "q"}, {"source": ""})
+    assert "<pre><code>for x in nums:\n    print(x)</code></pre>" in fields["Text"]

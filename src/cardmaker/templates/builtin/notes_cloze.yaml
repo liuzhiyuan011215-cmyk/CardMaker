@@ -1,0 +1,55 @@
+id: notes_cloze
+name: 读书笔记 · 填空卡
+icon: 📝
+order: 3
+group: notes
+group_name: 读书笔记
+variant: 填空卡
+description: Kindle、RIDI 或复制来的划线笔记：挖掉关键词做填空，或出选择题；背面附原文和书名章节。
+source: notes
+note_type: cloze
+dedup_key: text
+tags: ["CardMaker::读书笔记"]
+
+params:
+  max_per_item:
+    label: 每条划线最多几张
+    type: int
+    default: 1
+
+system_prompt: |
+  你是一位擅长帮人复习读书笔记的老师，把读者划线的句子做成填空卡，帮助记住书里最重要的想法。
+  你必须依据划线原文，不编造。你只输出 json。
+
+user_prompt: |
+  下面是读者在《{{ book_title }}》里划线的句子，每条前面有编号，后面可能标了章节和读者自己的想法。
+
+  任务：为每条值得记住的划线做 {{ max_per_item }} 张填空卡（太短、没有信息量的划线可以跳过）。
+
+  规则：
+  1. text：以划线原文为基础（太长可以只取最关键的一句），把最关键的词语挖空，
+     用 {% raw %}{{c1::被挖掉的原词}}{% endraw %} 标出，一张卡最多挖 2 处；挖掉的必须是原文里的原词。
+  2. quote：这张卡依据的划线原文，原样复制。
+  3. chapter：照抄这条划线标注的章节，没有就留空。
+  4. extra：一句话说明这句话的意思或启发（可以为空）；读者写了想法的，可以结合读者的想法。
+
+  {{ output_format }}
+
+  【划线笔记】
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [quote]
+  cloze_grounded: [text]
+  fields:
+    text: {label: "填空", required: true, pattern: '\{\{c\d+::', description: "挖空后的句子，用 {{c1::原词}} 标出挖空"}
+    chapter: {label: "章节", description: "照抄划线标注的章节"}
+    extra: {label: "要点", description: "一句话说明这句话的意思或启发"}
+    quote: {label: "原文", required: true, description: "依据的划线原文，原样复制"}
+
+card_fields:
+  Text: "{{ text }}"
+  Extra: "{{ extra }}"
+  SourceText: "{{ quote }}"
+  Source: "《{{ book_title }}》{% if chapter %} · {{ chapter }}{% endif %}"

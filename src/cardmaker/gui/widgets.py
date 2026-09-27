@@ -56,26 +56,27 @@ class DropZone(QFrame):
     file_chosen = Signal(Path)
     browse_clicked = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, title: str = "把 PDF 或文本文件拖到这里",
+                 hint: str = "支持文字版和扫描版 PDF，自动识别中文、韩文、英文", min_height: int = 260):
         super().__init__(parent)
         self.setObjectName("DropZone")
         self.setAcceptDrops(True)
-        self.setMinimumHeight(260)
+        self.setMinimumHeight(min_height)
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(10)
         icon = label("📄", "")
         icon.setStyleSheet("font-size: 56px;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title = label("把 PDF 或文本文件拖到这里", "Big")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint = label("支持文字版和扫描版 PDF，自动识别中文、韩文、英文", "Hint")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title = label(title, "Big")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint = label(hint, "Hint", wrap=True)
+        self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         button = QPushButton("选择文件…")
         button.clicked.connect(self.browse_clicked)
         layout.addWidget(icon)
-        layout.addWidget(title)
-        layout.addWidget(hint)
+        layout.addWidget(self.title)
+        layout.addWidget(self.hint)
         layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
 
     @staticmethod
@@ -106,16 +107,17 @@ class DropZone(QFrame):
 
 
 class Tile(QFrame):
-    """一张可点选的大卡片，用来选模板。"""
+    """一张可点选的大卡片，用来选用途。双击直接进入下一步。"""
 
     clicked = Signal()
+    double_clicked = Signal()
 
     def __init__(self, icon: str, title: str, text: str, parent=None):
         super().__init__(parent)
         self.setObjectName("Tile")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumSize(250, 110)
-        self.setMaximumHeight(130)
+        self.setMinimumSize(250, 120)
+        self.setMaximumHeight(150)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
         head = QHBoxLayout()
@@ -136,3 +138,7 @@ class Tile(QFrame):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit()

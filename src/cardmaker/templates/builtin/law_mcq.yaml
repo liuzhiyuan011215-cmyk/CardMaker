@@ -1,0 +1,69 @@
+id: law_mcq
+name: 法律条文 · 选择题
+icon: ⚖️
+order: 6
+group: law
+group_name: 法律条文
+variant: 选择题
+description: 法条、规章制度：只根据原文出题，每张卡标注条款号和页码，不编造。
+note_type: mcq
+dedup_key: question
+tags: ["CardMaker::法律"]
+
+params:
+  focus:
+    label: 出题重点
+    default: 期限、数额、主体、条件、法律后果
+    description: 优先考这些要素
+  max_per_page:
+    label: 每页最多几题
+    type: int
+    default: 6
+
+system_prompt: |
+  你是一位严谨的法学老师，擅长根据法律条文出单项选择题。
+  你必须严格依据给出的原文，绝不编造原文没有的内容。你只输出 json。
+
+user_prompt: |
+  任务：根据【本页正文】中的条文出单项选择题（四选一），帮助学习者记住条文的关键要素。
+
+  规则：
+  1. 只根据【本页正文】出题，正确答案必须是原文明确规定的内容，只凭原文就能作答。
+  2. 一题只考一个要点，优先考：{{ focus }}。不要出「以下说法正确的是」这种要比较多个陈述的题。
+  3. correct：正确答案，尽量用原文的原词。
+  4. distractors：3 个错误但似是而非的选项（例如改动期限、数额、主体），与正确答案长短、形式相近，
+     绝不能也是正确的。
+  5. explanation：说明正确答案依据的是哪一句原文。
+  6. article 填条款号，写法与原文一致；quote 为出题依据的原文句子，原样复制，一个字都不能改。
+  7. 每页最多 {{ max_per_page }} 题；条文少就少出，不要凑数。【上一页末尾】只用来帮助理解，不要从中出题。
+
+  {{ output_format }}
+
+  【上一页末尾】
+  {{ context or "（无）" }}
+
+  【本页正文】（{{ book_title }}，第 {{ page_label }} 页{% if chapter %}，{{ chapter }}{% endif %}）
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [quote]
+  mcq: true
+  fields:
+    question: {label: "题目", required: true, description: "题干"}
+    correct: {label: "正确答案", required: true, description: "正确选项的内容"}
+    distractors: {label: "干扰项", type: list, required: true, min_items: 3, description: "3 个错误但似是而非的选项"}
+    explanation: {label: "解析", description: "正确答案依据的是哪一句原文"}
+    article: {label: "条款号", description: "条款号，写法与原文一致，看不出来就留空"}
+    quote: {label: "原文", required: true, description: "出题依据的原文句子，原样复制"}
+
+card_fields:
+  Question: "{{ question }}"
+  A: "{{ option_a }}"
+  B: "{{ option_b }}"
+  C: "{{ option_c }}"
+  D: "{{ option_d }}"
+  Answer: "{{ answer }}"
+  Explanation: "{{ explanation }}"
+  SourceText: "{{ quote }}"
+  Source: "{{ source }}{% if article %} · {{ article }}{% endif %}"

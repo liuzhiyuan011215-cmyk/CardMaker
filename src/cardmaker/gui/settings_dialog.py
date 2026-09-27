@@ -10,6 +10,10 @@ from .widgets import label
 from .worker import FunctionTask
 
 PLATFORMS = [("阿里云百炼（通义千问）", "dashscope"), ("DeepSeek", "deepseek"), ("其他（自己填地址和模型）", "custom")]
+# qwen-audio-3.1-tts-flash 的音色：能读韩语的只有这 4 个多语种音色（也能读中文、英语）
+MULTI_VOICES = [("安欢（女声）", "longanhuan_v3.1"), ("安灵心（女声）", "longanlingxin_v3.1"),
+                ("安风月（女声）", "longanfengyue_v3.1"), ("讯安川（男声）", "xunanchuan_v3.1")]
+ENGLISH_VOICES = [("Emily（英式女声）", "Emily_v3.1"), ("Brian（美式男声）", "Brian_v3.1")] + MULTI_VOICES
 LANGUAGES = ["中文", "韩语", "英语"]
 
 
@@ -63,6 +67,14 @@ class SettingsDialog(QDialog):
         self.concurrency.setSuffix(" 页")
         self.concurrency.setToolTip("越大越快；如果经常提示「请求太频繁」，就调小一点")
         form.addRow("同时处理", self.concurrency)
+
+        self.tts_enabled = QCheckBox("导入 Anki 时给单词和例句配上发音（百炼 qwen-audio-3.1-tts-flash）")
+        self.tts_enabled.setChecked(self.settings.tts.enabled)
+        form.addRow("发音", self.tts_enabled)
+        self.voice_ko = self._voice_combo(MULTI_VOICES, self.settings.tts.voices.get("ko"))
+        self.voice_en = self._voice_combo(ENGLISH_VOICES, self.settings.tts.voices.get("en"))
+        form.addRow("韩语 / 中文音色", self.voice_ko)
+        form.addRow("英语音色", self.voice_en)
         layout.addLayout(form)
         layout.addWidget(label("API Key 只保存在这台电脑上（~/Library/Application Support/CardMaker），"
                                "不会上传到除大模型平台以外的任何地方。", "Hint", wrap=True))
@@ -83,6 +95,15 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
 
         self.platform.currentIndexChanged.connect(self._platform_changed)
+
+    @staticmethod
+    def _voice_combo(choices, current) -> QComboBox:
+        combo = QComboBox()
+        for text, voice in choices:
+            combo.addItem(text, voice)
+        index = combo.findData(current)
+        combo.setCurrentIndex(max(0, index))
+        return combo
 
     # ------------------------------------------------------------------
     def _platform_changed(self) -> None:
@@ -131,5 +152,8 @@ class SettingsDialog(QDialog):
         self.settings.llm = self.form_llm_settings()
         self.settings.meaning_language = self.language.currentText()
         self.settings.concurrency = self.concurrency.value()
+        self.settings.tts.enabled = self.tts_enabled.isChecked()
+        voice = self.voice_ko.currentData()
+        self.settings.tts.voices.update({"ko": voice, "zh": voice, "ja": voice, "en": self.voice_en.currentData()})
         save_settings(self.settings)
         super().accept()

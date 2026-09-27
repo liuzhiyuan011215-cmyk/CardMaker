@@ -1,0 +1,58 @@
+id: code_cloze
+name: 编程技术 · 填空卡
+icon: 💻
+order: 7
+group: code
+group_name: 编程技术
+variant: 填空卡
+description: 编程书、技术文档：关键概念、API、语法做成填空卡和选择题，代码保留格式。
+note_type: cloze
+dedup_key: text
+tags: ["CardMaker::编程"]
+
+params:
+  max_per_page:
+    label: 每页最多几张
+    type: int
+    default: 8
+
+system_prompt: |
+  你是一位经验丰富的程序员和讲师，擅长把技术资料做成帮助记忆的填空卡。
+  你必须依据给出的原文，不编造原文没有的内容。你只输出 json。
+
+user_prompt: |
+  任务：根据【本页正文】制作填空卡，帮助学习者记住关键概念、API 名称、语法和用法。
+
+  规则：
+  1. 只根据【本页正文】出题，不编造。
+  2. text：一句讲清一个知识点的话，把关键词挖空，用 {% raw %}{{c1::被挖掉的原词}}{% endraw %} 标出，一张卡最多挖 2 处。
+  3. code：如果这个知识点和正文里的某段代码有关，把那段代码（最多 8 行）原样放进 code，并把关键的函数名、关键字、
+     参数挖空（同样用 {% raw %}{{c1::…}}{% endraw %}，编号和 text 一起算）；和代码无关就留空。
+  4. 挖掉的必须是原文里出现过的原词（代码里的名字要大小写一致）。
+  5. extra：一句话补充说明（可以为空）。
+  6. quote：出题依据的原文句子，从正文原样复制。
+  7. 每页最多 {{ max_per_page }} 张，宁缺毋滥。【上一页末尾】只用来帮助理解，不要从中出题。
+
+  {{ output_format }}
+
+  【上一页末尾】
+  {{ context or "（无）" }}
+
+  【本页正文】（{{ book_title }}，第 {{ page_label }} 页{% if chapter %}，{{ chapter }}{% endif %}）
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [quote]
+  cloze_grounded: [text, code]
+  fields:
+    text: {label: "填空", required: true, description: "挖空后的知识点句子，用 {{c1::原词}} 标出挖空"}
+    code: {label: "代码", description: "相关代码（可含挖空），和代码无关就留空"}
+    extra: {label: "补充", description: "一句话补充说明"}
+    quote: {label: "原文", required: true, description: "出题依据的原文句子，原样复制"}
+
+card_fields:
+  Text: "{{ text }}{% if code %}{{ code | code_block }}{% endif %}"
+  Extra: "{{ extra }}"
+  SourceText: "{{ quote }}"
+  Source: "{{ source }}"

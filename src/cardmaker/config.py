@@ -57,9 +57,21 @@ class OcrSettings(BaseModel):
     dpi: int = 200
 
 
+class TTSSettings(BaseModel):
+    """发音（语音合成），默认用百炼的 qwen-audio-3.1-tts-flash。"""
+    enabled: bool = True
+    model: str = "qwen-audio-3.1-tts-flash"
+    api_key: str = ""  # 留空则用大模型的 Key（都是百炼时同一个 Key）
+    # 按文字语言选音色：多语种音色能读韩语和中文；英语用英语音色
+    voices: dict[str, str] = Field(default_factory=lambda: {
+        "ko": "longanhuan_v3.1", "zh": "longanhuan_v3.1", "ja": "longanhuan_v3.1", "en": "Emily_v3.1"})
+    format: str = "mp3"
+
+
 class Settings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     ocr: OcrSettings = Field(default_factory=OcrSettings)
+    tts: TTSSettings = Field(default_factory=TTSSettings)
     meaning_language: str = "中文"
     concurrency: int = 5
     anki_url: str = "http://127.0.0.1:8765"

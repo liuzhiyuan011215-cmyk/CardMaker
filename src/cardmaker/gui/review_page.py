@@ -12,13 +12,14 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QFileDialog, QHB
 
 from ..config import load_settings
 from ..export.preview import write_outputs
+from ..pipeline.postprocess import CLOZE, add_mcq_options
 from ..pipeline.result import Card, RunResult
 from ..storage import TaskStore
 from ..templates.loader import Template
 from .anki_dialog import AnkiImportDialog
 from .widgets import label
 
-HIDDEN_FIELDS = {"surface"}  # 内部用的字段，不在表格里显示
+HIDDEN_FIELDS = {"surface", "option_a", "option_b", "option_c", "option_d", "answer"}  # 内部用的字段，不在表格里显示
 READ_ONLY_FIELDS = {"kind"}
 KIND_TEXT = {"word": "单词", "phrase": "短语/句型"}
 STATUS_COLORS = {"已导入": "#16a34a", "已存在": "#98a2b3", "失败": "#dc2626"}
@@ -86,7 +87,8 @@ class CardTableModel(QAbstractTableModel):
                 return QColor(STATUS_COLORS.get(card.anki_status, "#1f2328"))
             return None
         name = self.field_at(index.column())
-        value = str(card.data.get(name, "") or "")
+        raw = card.data.get(name, "")
+        value = "；".join(map(str, raw)) if isinstance(raw, list) else str(raw or "")
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return KIND_TEXT.get(value, value) if name == "kind" else value
         if role == Qt.ItemDataRole.EditRole:
@@ -100,7 +102,13 @@ class CardTableModel(QAbstractTableModel):
         if index.column() == 0 and role == Qt.ItemDataRole.CheckStateRole:
             card.selected = Qt.CheckState(value) == Qt.CheckState.Checked
         elif index.column() > 0 and not self.is_status_column(index.column()) and role == Qt.ItemDataRole.EditRole:
-            card.data[self.field_at(index.column())] = str(value).strip()
+            name = self.field_at(index.column())
+            if self.template.fields[name].type == "list":
+                card.data[name] = [part.strip() for part in str(value).replace(";", "；").split("；") if part.strip()]
+            else:
+                card.data[name] = str(value).strip()
+            if self.template.is_mcq:  # 选择题：正确答案或干扰项改了，重新排 A–D
+                card.data = add_mcq_options(card.data)
             card.fields = self.template.render_card_fields(card.data, card.context)
         else:
             return False
@@ -134,17 +142,53 @@ class CardTableModel(QAbstractTableModel):
         return sum(1 for c in self.cards if c.selected)
 
 
-def preview_html(card: Card, reverse: bool) -> str:
-    """卡片预览（Qt 富文本）。字段内容已经过转义，只含 <b> 等简单标记。"""
+def _cloze(text: str, reveal: bool) -> str:
+    """填空卡预览：正面把 {{c1::答案::提示}} 显示成 [提示] 或 [……]，背面显示答案。"""
+    def repl(match):
+        answer, hint = match.group(1), match.group(2)
+        if reveal:
+            return f"<b>{answer}</b>"
+        return f"<span style='color:#2563eb; font-weight:600;'>[{hint or '……'}]</span>"
+    return CLOZE.sub(repl, text)
+
+
+def _sections(f: dict, pairs: list[tuple[str, str]]) -> str:
+    html = ""
+    for title, key in pairs:
+        if f.get(key):
+            html += f"<p style='color:#667085; font-size:13px;'>{title}</p><p style='font-size:16px;'>{f[key]}</p>"
+    if f.get("Source"):
+        html += f"<p style='color:#98a2b3; font-size:12px;'>{f['Source']}</p>"
+    return html
+
+
+def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") -> str:
+    """卡片预览（Qt 富文本）。字段内容已经过转义，只含 <b>、<pre> 等简单标记。"""
     f = card.fields
-    if "Front" not in f or "Meaning" not in f:  # 不是单词卡：直接列出所有字段
+    front_label = "<p style='color:#98a2b3; font-size:12px;'>正面</p>"
+    back_label = "<hr><p style='color:#98a2b3; font-size:12px;'>背面</p>"
+    if note_type == "cloze":
+        return (front_label + f"<p style='font-size:19px;'>{_cloze(f.get('Text', ''), False)}</p>" + back_label
+                + f"<p style='font-size:19px;'>{_cloze(f.get('Text', ''), True)}</p>"
+                + _sections(f, [("💡 要点", "Extra"), ("📖 原文", "SourceText")]))
+    if note_type == "mcq":
+        def options(answer: str | None) -> str:
+            rows = ""
+            for letter in "ABCD":
+                color = " bgcolor='#dcfce7'" if letter == answer else ""
+                rows += f"<tr><td{color} width='30'><b>{letter}</b></td><td{color}>{f.get(letter, '')}</td></tr>"
+            return f"<table width='100%' cellpadding='8' cellspacing='4'>{rows}</table>"
+        question = f"<p style='font-size:18px; font-weight:600;'>{f.get('Question', '')}</p>"
+        return (front_label + question + options(None) + back_label + question + options(f.get("Answer"))
+                + f"<p>正确答案：<b>{f.get('Answer', '')}</b></p>"
+                + _sections(f, [("💡 解析", "Explanation"), ("📖 原文", "SourceText")]))
+    if "Front" not in f or "Meaning" not in f:  # 其他笔记类型：直接列出所有字段
         rows = "".join(f"<tr><td style='color:#667085'>{k}</td><td>{v}</td></tr>" for k, v in f.items())
         return f"<table cellpadding='6' width='100%'>{rows}</table>"
     parts = [
-        "<p style='color:#98a2b3; font-size:12px;'>正面</p>",
+        front_label,
         f"<p align='center' style='font-size:28px; font-weight:600;'>{f['Meaning'] if reverse else f['Front']}</p>",
-        "<hr>",
-        "<p style='color:#98a2b3; font-size:12px;'>背面</p>",
+        back_label,
         f"<p align='center' style='font-size:22px; font-weight:600;'>{f['Front']}</p>",
     ]
 
@@ -189,7 +233,7 @@ class ReviewPage(QWidget):
 
         toolbar = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText("🔍 搜索单词、释义、例句…")
+        self.search.setPlaceholderText("🔍 搜索卡片内容…")
         self.search.setClearButtonEnabled(True)
         self.search.setMaximumWidth(320)
         toolbar.addWidget(self.search)
@@ -260,6 +304,8 @@ class ReviewPage(QWidget):
     # ------------------------------------------------------------------
     def set_result(self, result: RunResult, template: Template, store: TaskStore | None = None) -> None:
         self.result, self.template, self.store = result, template, store
+        for button in (self.forward, self.reverse):  # 「外语→释义 / 释义→外语」只对单词卡有意义
+            button.setVisible(template.note_type == "vocab")
         self.model = CardTableModel(result.cards, template, self)
         self.model.dataChanged.connect(lambda *_: (self._update_count(), self._update_preview(),
                                                    self._save_timer.start()))
@@ -297,7 +343,8 @@ class ReviewPage(QWidget):
 
     def _update_preview(self) -> None:
         card = self._current_card()
-        self.preview.setHtml(preview_html(card, self.reverse.isChecked()) if card else
+        note_type = self.template.note_type if self.result else "vocab"
+        self.preview.setHtml(preview_html(card, self.reverse.isChecked(), note_type) if card else
                              "<p style='color:#98a2b3'>在左边点一张卡片，这里显示它的样子。</p>")
 
     def _resize_columns(self) -> None:

@@ -93,6 +93,7 @@ class NoteType:
     fields: list[str]
     templates: list[CardTemplate]
     css: str
+    is_cloze: bool = False  # Anki 原生填空类型：一条笔记里有几处 {{c1::…}}、{{c2::…}} 就生成几张卡
 
     def renamed(self, name: str) -> "NoteType":
         return dataclasses.replace(self, name=name)
@@ -110,4 +111,80 @@ VOCAB = NoteType(
     css=VOCAB_CSS,
 )
 
-NOTE_TYPES = {"vocab": VOCAB}  # 模板 YAML 里的 note_type → 笔记类型定义
+# ---------------------------------------------------------------------- 填空卡
+_COMMON_CSS = """.card {
+  font-family: -apple-system, "PingFang SC", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 20px; line-height: 1.7; text-align: left; color: #333333; background-color: #ffffff;
+  max-width: 720px; margin: 0 auto; padding: 8px 16px;
+}
+.section { margin: 16px 0; }
+.label { font-size: 14px; color: #888888; margin-bottom: 4px; }
+.quote { font-size: 17px; color: #555555; border-left: 3px solid #d0d7e2; padding-left: 10px; }
+.source { margin-top: 24px; font-size: 13px; color: #aaaaaa; }
+pre { background: #f6f8fa; border-radius: 6px; padding: 10px 12px; font-size: 15px; line-height: 1.5;
+      white-space: pre-wrap; text-align: left; }
+.nightMode .card, .night_mode .card { background-color: #1a1b20; color: #e2e2e2; }
+.nightMode .quote, .night_mode .quote { color: #bbbbbb; border-color: #44474f; }
+.nightMode pre, .night_mode pre { background: #2a2b31; }
+"""
+
+CLOZE_FRONT = """<div class="cloze-text">{{cloze:Text}}</div>"""
+CLOZE_BACK = """<div class="cloze-text">{{cloze:Text}}</div>
+{{#Extra}}<div class="section"><div class="label">💡 要点</div>{{Extra}}</div>{{/Extra}}
+{{#SourceText}}<div class="section"><div class="label">📖 原文</div><div class="quote">{{SourceText}}</div></div>{{/SourceText}}
+{{#Source}}<div class="source">{{Source}}</div>{{/Source}}"""
+CLOZE_CSS = _COMMON_CSS + """.cloze { font-weight: 700; color: #2563eb; }
+.nightMode .cloze, .night_mode .cloze { color: #6aa9ff; }
+"""
+
+CLOZE = NoteType(
+    name="CardMaker 填空",
+    fields=["Text", "Extra", "SourceText", "Source"],
+    templates=[CardTemplate("填空", CLOZE_FRONT, CLOZE_BACK)],
+    css=CLOZE_CSS,
+    is_cloze=True,
+)
+
+# ---------------------------------------------------------------------- 选择题
+_OPTIONS = """<div class="options {cls}">
+  <div class="option" id="{prefix}A"><span class="letter">A</span>{{{{A}}}}</div>
+  <div class="option" id="{prefix}B"><span class="letter">B</span>{{{{B}}}}</div>
+  <div class="option" id="{prefix}C"><span class="letter">C</span>{{{{C}}}}</div>
+  <div class="option" id="{prefix}D"><span class="letter">D</span>{{{{D}}}}</div>
+</div>"""
+
+MCQ_FRONT = """<div class="question">{{Question}}</div>
+""" + _OPTIONS.format(cls="", prefix="q-")
+
+MCQ_BACK = """<div class="question">{{Question}}</div>
+""" + _OPTIONS.format(cls="answered", prefix="a-") + """
+<div class="answer-line">正确答案：<b>{{Answer}}</b></div>
+{{#Explanation}}<div class="section"><div class="label">💡 解析</div>{{Explanation}}</div>{{/Explanation}}
+{{#SourceText}}<div class="section"><div class="label">📖 原文</div><div class="quote">{{SourceText}}</div></div>{{/SourceText}}
+{{#Source}}<div class="source">{{Source}}</div>{{/Source}}
+<script>
+  // 把正确选项标成绿色（电脑版、AnkiMobile、AnkiDroid 都支持）
+  (function () {
+    var answer = "{{Answer}}".replace(/<[^>]*>/g, "").trim().toUpperCase();
+    var el = document.getElementById("a-" + answer);
+    if (el) el.classList.add("correct");
+  })();
+</script>"""
+
+MCQ_CSS = _COMMON_CSS + """.question { font-size: 21px; font-weight: 600; margin: 8px 0 16px; }
+.option { border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+.letter { display: inline-block; width: 26px; font-weight: 700; color: #2563eb; }
+.option.correct { border-color: #16a34a; background: #ecfdf3; }
+.answer-line { margin-top: 14px; font-size: 17px; }
+.nightMode .option, .night_mode .option { border-color: #3a3b41; }
+.nightMode .option.correct, .night_mode .option.correct { background: #173d2a; border-color: #22c55e; }
+"""
+
+MCQ = NoteType(
+    name="CardMaker 选择题",
+    fields=["Question", "A", "B", "C", "D", "Answer", "Explanation", "SourceText", "Source"],
+    templates=[CardTemplate("选择题", MCQ_FRONT, MCQ_BACK)],
+    css=MCQ_CSS,
+)
+
+NOTE_TYPES = {"vocab": VOCAB, "cloze": CLOZE, "mcq": MCQ}  # 模板 YAML 里的 note_type → 笔记类型定义

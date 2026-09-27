@@ -10,15 +10,16 @@ from ..pipeline.runner import load_result
 from ..storage import TaskStore
 from ..templates.loader import load_template
 from .history_dialog import HistoryDialog
-from .import_page import ImportPage
-from .options_page import OptionsPage
 from .progress_page import ProgressPage
+from .purpose_page import PurposePage
 from .review_page import ReviewPage
 from .settings_dialog import SettingsDialog
+from .source_page import SourcePage
+from .template_editor import TemplateEditorDialog
 from .widgets import StepIndicator, label
 from .worker import GenerateWorker
 
-STEPS = ["选择文件", "选择用途", "生成卡片", "检查并导入"]
+STEPS = ["选择用途", "选择资料", "生成卡片", "检查并导入"]
 
 
 class MainWindow(QMainWindow):
@@ -62,19 +63,20 @@ class MainWindow(QMainWindow):
         root.addWidget(header)
 
         self.stack = QStackedWidget()
-        self.import_page = ImportPage()
-        self.options_page = OptionsPage()
+        self.purpose_page = PurposePage()
+        self.source_page = SourcePage()
         self.progress_page = ProgressPage()
         self.review_page = ReviewPage()
-        for page in (self.import_page, self.options_page, self.progress_page, self.review_page):
+        for page in (self.purpose_page, self.source_page, self.progress_page, self.review_page):
             self.stack.addWidget(page)
         root.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
-        self.import_page.next_requested.connect(self.to_options)
-        self.import_page.resume_requested.connect(self.resume)
-        self.options_page.back_requested.connect(lambda: self.go(0))
-        self.options_page.start_requested.connect(self.start_generation)
+        self.purpose_page.next_requested.connect(self.to_source)
+        self.purpose_page.resume_requested.connect(self.resume)
+        self.purpose_page.edit_template_requested.connect(self.edit_templates)
+        self.source_page.back_requested.connect(lambda: self.go(0))
+        self.source_page.start_requested.connect(self.start_generation)
         self.progress_page.cancel_requested.connect(self.cancel_generation)
         self.review_page.restart_requested.connect(self.restart)
         self.refresh_resume_banner()
@@ -84,18 +86,25 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(index)
         self.steps.set_current(index)
 
-    def to_options(self) -> None:
-        self.options_page.set_document(self.import_page.path, self.import_page.info)
-        self.go(1)
+    def to_source(self) -> None:
+        if self.purpose_page.group:
+            self.source_page.set_group(self.purpose_page.group)
+            self.go(1)
 
     def restart(self) -> None:
-        self.import_page.clear()
+        self.source_page.clear_file()
         self.refresh_resume_banner()
         self.go(0)
 
     def refresh_resume_banner(self) -> None:
         unfinished = self.store.unfinished_tasks()
-        self.import_page.show_unfinished(unfinished[0] if unfinished else None)
+        self.purpose_page.show_unfinished(unfinished[0] if unfinished else None)
+
+    def edit_templates(self) -> None:
+        group = self.purpose_page.group
+        template = group.variants[0] if group else None
+        if TemplateEditorDialog(self, template).exec():
+            self.purpose_page.reload()
 
     def open_settings(self, message: str = "") -> bool:
         return SettingsDialog(self, message).exec() == SettingsDialog.DialogCode.Accepted
@@ -132,9 +141,9 @@ class MainWindow(QMainWindow):
         settings = self.ensure_api_key()
         if settings is None:
             return
-        template, params, options = self.options_page.collect()
+        template, params, options = self.source_page.collect()
         self.template = template
-        self._run(GenerateWorker(self.import_page.path, template, params, options, settings, store=self.store))
+        self._run(GenerateWorker(self.source_page.path, template, params, options, settings, store=self.store))
 
     def resume(self, task_id: int) -> None:
         """断点续传：只处理上次没完成或失败的页。"""
@@ -165,10 +174,10 @@ class MainWindow(QMainWindow):
             failed = [c.error for c in result.chunks if c.status == "failed"]
             reason = ("已取消。任务已保存，可以在第一步点「继续生成」接着做。" if result.cancelled else
                       f"所有页面都失败了：{failed[0]}" if failed else
-                      "没有找到合适的内容。可以换个模板，或者把水平调低一点再试。")
+                      "没有找到合适的内容。可以换个用途，或者调整选项（例如把水平调低一点）再试。")
             QMessageBox.information(self, "没有生成卡片", reason)
             self.refresh_resume_banner()
-            self.go(0)
+            self.go(0 if result.cancelled else 1)
             return
         if self.template is None or self.template.id != result.template_id:
             self.template = load_template(result.template_id)

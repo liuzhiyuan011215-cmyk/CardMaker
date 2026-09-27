@@ -13,6 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from ..anki.connect import AnkiConnectError
+from ..tts import TTSError
 from ..config import Settings
 from ..llm.client import ChatModel, FatalLLMError, LLMClient, explain_error
 from ..pipeline.runner import GenerateOptions, resume_task, run_generation
@@ -42,7 +43,7 @@ class BackgroundTask(QObject):
             result = self.work()
         except FatalLLMError as exc:
             self.failed.emit(str(exc))
-        except AnkiConnectError as exc:  # 没开 Anki 之类的预期情况，记一行日志即可
+        except (AnkiConnectError, TTSError) as exc:  # 没开 Anki、没网之类的预期情况，记一行日志即可
             log.info("Anki：%s", exc)
             self.failed.emit(str(exc))
         except Exception as exc:
@@ -64,6 +65,19 @@ class FunctionTask(BackgroundTask):
 
     def work(self):
         return self.fn()
+
+
+class ProgressTask(BackgroundTask):
+    """在后台执行 fn(report)，fn 可以随时调用 report("…") 报告进度（例如「正在生成发音 3/20」）。"""
+
+    progress = Signal(str)
+
+    def __init__(self, fn: Callable[[Callable[[str], None]], object]):
+        super().__init__()
+        self.fn = fn
+
+    def work(self):
+        return self.fn(self.progress.emit)
 
 
 class GenerateWorker(BackgroundTask):

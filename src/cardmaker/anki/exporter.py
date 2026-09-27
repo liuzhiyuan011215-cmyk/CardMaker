@@ -70,9 +70,14 @@ def resolve_note_type(key: str, options: ImportOptions) -> NoteType:
 
 def note_fields(card: Card, note_type: NoteType, options: ImportOptions) -> dict[str, str]:
     fields = {name: card.fields.get(name, "") for name in note_type.fields}
-    fields["CardForward"] = "y" if options.forward else ""
-    fields["CardReverse"] = "y" if options.reverse else ""
+    if "CardForward" in fields:  # 单词卡：按用户选的方向生成正向 / 反向卡
+        fields["CardForward"] = "y" if options.forward else ""
+        fields["CardReverse"] = "y" if options.reverse else ""
     return fields
+
+
+def has_directions(note_type_key: str) -> bool:
+    return "CardForward" in NOTE_TYPES[note_type_key].fields
 
 
 def ensure_note_type(client: AnkiConnect, note_type: NoteType) -> str:
@@ -83,18 +88,20 @@ def ensure_note_type(client: AnkiConnect, note_type: NoteType) -> str:
         if client.model_field_names(name) == note_type.fields:
             return name
         name, n = f"{note_type.name} {n}", n + 1
-    client.create_model(name, note_type.fields, note_type.anki_templates(), note_type.css)
+    client.create_model(name, note_type.fields, note_type.anki_templates(), note_type.css, note_type.is_cloze)
     log.info("已创建笔记类型：%s", name)
     return name
 
 
 def import_to_anki(client: AnkiConnect, cards: list[Card], note_type_key: str, template_tags: list[str],
-                   book_title: str, options: ImportOptions) -> ImportReport:
-    if not (options.forward or options.reverse):
+                   book_title: str, options: ImportOptions, media: list[Path] = ()) -> ImportReport:
+    if has_directions(note_type_key) and not (options.forward or options.reverse):
         raise ValueError("至少要选一个方向")
     note_type = resolve_note_type(note_type_key, options)
     model = ensure_note_type(client, note_type)
     client.create_deck(options.deck)  # 已存在时什么都不做
+    for path in media:  # 发音文件
+        client.store_media_file(path)
 
     notes = [{"deckName": options.deck, "modelName": model, "fields": note_fields(c, note_type, options),
               "tags": card_tags(c, template_tags, book_title, options.tags),
@@ -126,24 +133,25 @@ def stable_id(text: str) -> int:
 
 
 def export_apkg(cards: list[Card], note_type_key: str, template_tags: list[str], book_title: str,
-                options: ImportOptions, path: Path) -> Path:
+                options: ImportOptions, path: Path, media: list[Path] = ()) -> Path:
     import genanki
 
-    if not (options.forward or options.reverse):
+    if has_directions(note_type_key) and not (options.forward or options.reverse):
         raise ValueError("至少要选一个方向")
     note_type = resolve_note_type(note_type_key, options)
     model = genanki.Model(stable_id(f"model:{note_type.name}"), note_type.name,
                           fields=[{"name": f} for f in note_type.fields],
                           templates=[{"name": t.name, "qfmt": t.front, "afmt": t.back} for t in note_type.templates],
-                          css=note_type.css)
+                          css=note_type.css,
+                          model_type=genanki.Model.CLOZE if note_type.is_cloze else genanki.Model.FRONT_BACK)
     deck = genanki.Deck(stable_id(f"deck:{options.deck}"), options.deck)
     for card in cards:
         fields = note_fields(card, note_type, options)
         deck.add_note(genanki.Note(
             model=model, fields=[fields[f] for f in note_type.fields],
             tags=card_tags(card, template_tags, book_title, options.tags),
-            guid=genanki.guid_for(note_type.name, fields["Front"]),  # 同一个词重复导入时是更新而不是重复
+            guid=genanki.guid_for(note_type.name, fields[note_type.fields[0]]),  # 重复导入时是更新而不是重复
         ))
     path.parent.mkdir(parents=True, exist_ok=True)
-    genanki.Package(deck).write_to_file(str(path))
+    genanki.Package(deck, media_files=[str(p) for p in media]).write_to_file(str(path))
     return path

@@ -96,22 +96,40 @@ def test_worker_reports_bad_key(app, make_pdf, template):
 def test_wizard_navigation(app, make_pdf):
     pdf = make_pdf([TEXT, TEXT, TEXT])
     window = MainWindow()
-    assert not window.import_page.next_button.isEnabled()
-    window.import_page.set_file(pdf)
-    assert window.import_page.next_button.isEnabled()
-    assert "共 3 页" in window.import_page.file_detail.text()
+    purpose = window.purpose_page
+    assert [g.id for g in purpose.groups][:3] == ["vocab_reading", "vocab_book", "notes"]
+    assert len(purpose.tiles) == 7 and not purpose.next_button.isEnabled()
 
-    window.to_options()
+    purpose.select(purpose.groups[0])  # 第一步：选「单词 · 阅读材料」
+    window.to_source()
     assert window.stack.currentIndex() == 1
-    assert window.options_page.template.id == "vocab_reading"  # 最常用的排第一
-    template, params, options = window.options_page.collect()
+    source = window.source_page
+    assert not source.start_button.isEnabled() and not source.variant_row.isVisibleTo(source)
+    source.set_file(pdf)  # 第二步：选资料
+    assert source.start_button.isEnabled() and "共 3 页" in source.file_detail.text()
+    template, params, options = source.collect()
+    assert template.id == "vocab_reading"
     assert params["level"] == "TOPIK 4级" and params["ai_example"] is True and options.pages is None
 
-    window.options_page.page_mode.setCurrentIndex(1)
-    window.options_page.page_from.setValue(2)
-    window.options_page.page_to.setValue(3)
-    assert window.options_page.collect()[2].pages == [2, 3]
-    assert "预计处理 2 页" in window.options_page.estimate.text()
+    source.page_mode.setCurrentIndex(1)
+    source.page_from.setValue(2)
+    source.page_to.setValue(3)
+    assert source.collect()[2].pages == [2, 3]
+    assert "预计处理 2 页" in source.estimate.text()
+
+
+def test_law_has_card_type_choice(app, make_pdf):
+    window = MainWindow()
+    law = next(g for g in window.purpose_page.groups if g.id == "law")
+    window.purpose_page.select(law)
+    window.to_source()
+    source = window.source_page
+    assert source.variant_row.isVisibleTo(source)
+    assert source.template().id == "law_cloze"
+    source.variant_group.button(1).setChecked(True)  # 改成选择题
+    assert source.template().id == "law_mcq"
+    source.set_file(make_pdf([TEXT]))
+    assert source.collect()[0].id == "law_mcq"
 
 
 # ---------------------------------------------------------------------- 导入 Anki 窗口
@@ -150,7 +168,7 @@ def test_anki_dialog_when_anki_is_closed(app, template, tmp_path):
     dialog.start_check(background=False)
     assert not dialog.connected and not dialog.import_button.isEnabled()
     assert "AnkiConnect" in dialog.status.text() and dialog.retry.isVisibleTo(dialog)
-    path = dialog.export_to(tmp_path / "书.apkg", notify=False)  # 没开 Anki 也能导出 .apkg
+    path = dialog.export_to(tmp_path / "书.apkg")  # 没开 Anki 也能导出 .apkg
     assert path.stat().st_size > 0
 
 
@@ -202,8 +220,8 @@ def test_history_dialog_buttons(app, cancelled_task):
 def test_resume_banner_and_open_task(app, cancelled_task):
     store, task_id = cancelled_task
     window = MainWindow(store)
-    assert window.import_page.resume_panel.isVisibleTo(window.import_page)
-    assert "1/2 页" in window.import_page.resume_text.text()
+    assert window.purpose_page.resume_panel.isVisibleTo(window.purpose_page)
+    assert "1/2 页" in window.purpose_page.resume_text.text()
 
     window.open_task(task_id)
     assert window.stack.currentIndex() == 3
@@ -230,3 +248,16 @@ def test_worker_resumes_task(app, cancelled_task):
     assert llm.calls == ["PAGE2"]
     assert [c.fields["Front"] for c in results[0].cards] == ["확산되다", "방치되다"]
     assert not store.get_task(task_id).unfinished
+
+
+def test_switching_purpose_does_not_leave_old_card_types(app):
+    """回归测试：切换用途后，上一个用途的「卡片类型」按钮不能残留。"""
+    window = MainWindow()
+    groups = {g.id: g for g in window.purpose_page.groups}
+    source = window.source_page
+    for gid in ("vocab_reading", "law", "notes", "code"):
+        source.set_group(groups[gid])
+        texts = [b.text() for b in source.variant_group.buttons()]
+        assert texts == [v.variant for v in groups[gid].variants]
+        radios = [source.variant_layout.itemAt(i).widget() for i in range(source.variant_layout.count())]
+        assert len([w for w in radios if w is not None]) == 1 + len(texts)  # 「卡片类型」标签 + 按钮

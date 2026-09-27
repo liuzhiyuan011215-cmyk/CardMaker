@@ -3,6 +3,10 @@
 - korean_reading.pdf  两页韩语文章，文字版，带书签（章节）和页码标签（从第 37 页开始）
 - vocab_book_scan.pdf 一页模拟扫描的中韩单词书（纯图片，没有文字层，走 OCR）
 - english_reading.pdf 一页英语短文，文字版
+- law_demo.pdf        两页虚构的图书馆借阅规定（法律条文用途）
+- code_demo.pdf       一页 Python 入门讲解（编程技术用途）
+- humanities_demo.pdf 一页人文短文（人文社科用途）
+- kindle_clippings.txt Kindle 格式的读书笔记（两本虚构的书，含一条读者笔记和一个书签）
 
 运行：.venv/bin/python scripts/make_demo_samples.py
 """
@@ -132,7 +136,96 @@ def make_vocab_scan() -> Path:
     return path
 
 
+LAW_PAGES = [
+    ("第一章 总则",
+     "某大学图书馆借阅管理规定（演示）\n\n第一章 总则\n"
+     "第一条 为规范图书借阅行为，提高馆藏资源利用率，根据学校有关规定，制定本规定。\n"
+     "第二条 本规定适用于在校学生和在职教职工。校外人员须办理临时阅览证后方可进馆阅览，不得外借图书。\n\n"
+     "第二章 借阅\n"
+     "第三条 本科生每人最多可同时借阅图书十册，借期为三十日；研究生每人最多可同时借阅图书二十册，借期为六十日。\n"
+     "第四条 借阅期满前七日内，读者可以通过图书馆网站续借一次，续借期为三十日。已被他人预约的图书不得续借。\n"
+     "第五条 工具书、古籍善本和过刊合订本仅限馆内阅览，不予外借。"),
+    ("第三章 逾期与赔偿",
+     "第三章 逾期与赔偿\n"
+     "第六条 图书逾期未还的，每册每日收取逾期费零点一元；逾期超过九十日的，暂停其借阅权限，直至归还图书并缴清费用。\n"
+     "第七条 读者遗失或损坏所借图书的，应当赔偿。赔偿金额为图书定价的二倍；图书已绝版的，赔偿金额为定价的五倍。\n"
+     "第八条 读者对处理决定有异议的，可以在收到决定之日起十五日内向图书馆办公室书面申请复核。"),
+]
+
+CODE_TEXT = (
+    "第 3 章 列表与字典\n\n"
+    "列表（list）是 Python 中最常用的有序容器，用方括号表示，例如 nums = [3, 1, 2]。列表是可变的："
+    "append() 方法在末尾添加一个元素，insert() 方法在指定位置插入元素，pop() 方法删除并返回最后一个元素。\n\n"
+    "对列表排序有两种方式：sorted(nums) 返回一个新的有序列表，原列表保持不变；nums.sort() 则直接修改原列表，返回值是 None。\n\n"
+    "    nums = [3, 1, 2]\n"
+    "    new_nums = sorted(nums)\n"
+    "    print(nums, new_nums)   # 输出 [3, 1, 2] [1, 2, 3]\n\n"
+    "字典（dict）用来存储键值对，例如 ages = {\"Tom\": 18}。用 ages[\"Tom\"] 读取不存在的键会抛出 KeyError；"
+    "如果不确定键是否存在，应该使用 ages.get(\"Tom\", 0)，键不存在时返回默认值 0。\n\n"
+    "遍历字典时，items() 方法同时返回键和值：\n\n"
+    "    for name, age in ages.items():\n"
+    "        print(name, age)"
+)
+
+HUMANITIES_TEXT = (
+    "第二章 印刷术与知识的传播\n\n"
+    "北宋庆历年间，平民毕昇发明了胶泥活字印刷术。与此前的雕版印刷相比，活字可以反复排版使用，大大降低了印书的成本。"
+    "这一发明被沈括记载在《梦溪笔谈》中，才得以流传后世。\n\n"
+    "十五世纪中叶，德国人古腾堡改进了金属活字印刷，并使用压力印刷机，使欧洲书籍的产量在短短数十年内成倍增长。\n\n"
+    "印刷术的普及改变了知识传播的方式。书籍价格下降以后，读书不再是少数贵族和僧侣的特权，识字的人群迅速扩大。"
+    "有学者认为，印刷术为后来的宗教改革和科学革命提供了重要条件，因为新的思想可以在很短的时间内传到更远的地方。"
+)
+
+KINDLE_CLIPPINGS = [
+    ("思考的方法 (林远)", "Highlight", 12, "150-152", "真正的学习不是记住答案，而是能够用自己的话把道理讲给别人听。"),
+    ("思考的方法 (林远)", "Highlight", 18, "230-233", "间隔重复之所以有效，是因为每一次在快要遗忘的时候回忆，都会让记忆变得更加牢固。"),
+    ("思考的方法 (林远)", "Note", 18, "233", "这就是 Anki 的原理！"),
+    ("思考的方法 (林远)", "Highlight", 25, "310-312", "把一个大问题拆成几个小问题，是解决复杂问题最朴素也最有效的方法。"),
+    ("思考的方法 (林远)", "Bookmark", 30, "380", ""),
+    ("思考的方法 (林远)", "Highlight", 41, "512-515", "专注不是一直逼自己努力，而是主动减少干扰，让注意力自然地停留在一件事上。"),
+    ("思考的方法 (林远)", "Highlight", 56, "700-702", "写作是最好的思考工具，因为写下来的想法才能被检查、被修改。"),
+    ("时间的礼物 (陈默)", "Highlight", 8, "90-92", "我们高估了一天能做的事，却低估了一年能做的事。"),
+    ("时间的礼物 (陈默)", "Highlight", 33, "401-404", "所谓自律，本质上是提前替未来的自己做好决定。"),
+]
+
+
+def make_law() -> Path:
+    doc = pymupdf.open()
+    for _, body in LAW_PAGES:
+        cjk_page_text(doc, body)
+    doc.set_toc([[1, title, i + 1] for i, (title, _) in enumerate(LAW_PAGES)])
+    doc.set_metadata({"title": "某大学图书馆借阅管理规定（演示）"})
+    doc.subset_fonts()
+    path = OUT / "law_demo.pdf"
+    doc.save(path, garbage=3, deflate=True)
+    return path
+
+
+def make_single_page(text: str, title: str, name: str) -> Path:
+    doc = pymupdf.open()
+    cjk_page_text(doc, text)
+    doc.set_metadata({"title": title})
+    doc.subset_fonts()
+    path = OUT / name
+    doc.save(path, garbage=3, deflate=True)
+    return path
+
+
+def make_kindle() -> Path:
+    blocks = []
+    for book, kind, page, location, text in KINDLE_CLIPPINGS:
+        what = {"Highlight": "Your Highlight", "Note": "Your Note", "Bookmark": "Your Bookmark"}[kind]
+        meta = f"- {what} on page {page} | Location {location} | Added on Monday, September 1, 2026 9:15:01 PM"
+        blocks.append(f"{book}\n{meta}\n\n{text}\n==========\n")
+    path = OUT / "kindle_clippings.txt"
+    path.write_text("\ufeff" + "".join(blocks), encoding="utf-8")
+    return path
+
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
-    for maker in (make_korean_reading, make_vocab_scan, make_english_reading):
+    makers = [make_korean_reading, make_vocab_scan, make_english_reading, make_law, make_kindle,
+              lambda: make_single_page(CODE_TEXT, "Python 入门（演示）", "code_demo.pdf"),
+              lambda: make_single_page(HUMANITIES_TEXT, "书与文明（演示）", "humanities_demo.pdf")]
+    for maker in makers:
         print("生成", maker())

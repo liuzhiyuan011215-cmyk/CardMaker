@@ -1,0 +1,67 @@
+id: custom_mcq
+name: 自定义 · 选择题
+icon: ✏️
+order: 12
+group: custom
+group_name: 自定义
+variant: 选择题
+description: 用一句话告诉 AI 你想从资料里学什么，它按你的要求出填空卡或选择题。也可以编辑模板文件深度定制。
+note_type: mcq
+dedup_key: question
+tags: ["CardMaker::自定义"]
+
+params:
+  goal:
+    label: 想学什么
+    default: 这份资料里最值得记住的知识点
+    description: 例如：化学方程式和反应条件；经济学的核心概念和定义；药物的适应症和副作用
+  max_per_page:
+    label: 每页最多几题
+    type: int
+    default: 6
+
+system_prompt: |
+  你是一位善于出题的老师，根据学习者的要求，按资料内容出单项选择题。
+  你必须依据给出的原文，不编造原文没有的内容。你只输出 json。
+
+user_prompt: |
+  学习者想学：{{ goal }}
+
+  任务：根据【本页正文】，围绕学习者想学的内容出单项选择题（四选一）；和这个目标无关的内容不要出。
+
+  规则：
+  1. 只根据【本页正文】出题，正确答案必须能从原文得出。
+  2. 一题只考一个要点；correct 为正确答案；distractors 为 3 个错误但似是而非的选项，不能也是正确的。
+  3. explanation：说明正确答案依据的是哪一句原文。
+  4. quote：出题依据的原文句子，从正文原样复制。
+  5. 每页最多 {{ max_per_page }} 题，宁缺毋滥。【上一页末尾】只用来帮助理解，不要从中出题。
+
+  {{ output_format }}
+
+  【上一页末尾】
+  {{ context or "（无）" }}
+
+  【本页正文】（{{ book_title }}，第 {{ page_label }} 页{% if chapter %}，{{ chapter }}{% endif %}）
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [quote]
+  mcq: true
+  fields:
+    question: {label: "题目", required: true, description: "题干"}
+    correct: {label: "正确答案", required: true, description: "正确选项的内容"}
+    distractors: {label: "干扰项", type: list, required: true, min_items: 3, description: "3 个错误但似是而非的选项"}
+    explanation: {label: "解析", description: "正确答案依据的是哪一句原文"}
+    quote: {label: "原文", required: true, description: "出题依据的原文句子，原样复制"}
+
+card_fields:
+  Question: "{{ question }}"
+  A: "{{ option_a }}"
+  B: "{{ option_b }}"
+  C: "{{ option_c }}"
+  D: "{{ option_d }}"
+  Answer: "{{ answer }}"
+  Explanation: "{{ explanation }}"
+  SourceText: "{{ quote }}"
+  Source: "{{ source }}"

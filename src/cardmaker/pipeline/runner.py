@@ -16,6 +16,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..ingest.notes import load_notes
 from ..ingest.pdf import DocumentText, extract_pdf, read_text_file
 from ..llm.client import ChatModel, FatalLLMError
 from ..progress import GENERATE, Cancelled, ProgressEvent, ProgressFn
@@ -23,7 +24,7 @@ from ..storage import (CANCELLED, DONE, FAILED, INCOMPLETE, OK, PENDING, RUNNING
                        TaskStore)
 from ..templates.loader import OutputError, Template, load_template
 from .chunking import Chunk, make_chunks
-from .postprocess import check_grounding, dedup_key
+from .postprocess import add_mcq_options, check_grounding, dedup_key
 from .result import Card, ChunkOutcome, RunResult
 
 log = logging.getLogger(__name__)
@@ -38,6 +39,8 @@ class GenerateOptions:
     dpi: int = 200
     book_title: str | None = None
     concurrency: int = 1  # 同时处理几页
+    source: str = "document"  # document：按页处理；notes：读书笔记，按条分组
+    notes_book: str | None = None  # 读书笔记里有多本书时，只处理这一本
     max_attempts: int = 4  # 每页最多调用几次：第一次 + 最多 3 次重试（指数退避）
     min_chars: int = 30  # 少于这么多字的页跳过
 
@@ -49,6 +52,8 @@ class GenerateOptions:
 
 def load_document(path: Path, options: GenerateOptions, progress: ProgressFn,
                   cancel: threading.Event | None = None) -> DocumentText:
+    if options.source == "notes":
+        return load_notes(path, book=options.notes_book, title=options.book_title)
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         return extract_pdf(path, pages=options.pages, ocr_mode=options.ocr_mode, ocr_langs=options.ocr_langs,
@@ -117,7 +122,8 @@ def build_cards(template: Template, title: str, records: list[ChunkRecord],
                    "chapter": chunk.chapter, "page_label": chunk.page_label}
         for item in rec.items:
             # 跨页的句子可能包含上一页末尾，所以校验范围是「上下文 + 本页」
-            grounding = check_grounding(item, template.grounded, f"{chunk.context}\n{chunk.text}")
+            grounding = check_grounding(item, template.grounded, f"{chunk.context}\n{chunk.text}",
+                                        template.cloze_grounded)
             if grounding is None:
                 dropped["原文中找不到"] += 1
                 continue
@@ -131,6 +137,8 @@ def build_cards(template: Template, title: str, records: list[ChunkRecord],
                 dropped["超出最大卡片数"] += 1
                 stopped_early = True
                 continue
+            if template.is_mcq:
+                item = add_mcq_options(item)
             cards.append(Card(template.render_card_fields(item, context), item, chunk.page_label, chunk.chapter,
                               grounding, context=dict(context)))
     invalid = sum(r.invalid for r in records if r.status == OK)
@@ -159,7 +167,7 @@ def prepare_task(store: TaskStore, input_path: Path, template: Template, params:
     params = template.resolve_params(params)
     doc = load_document(input_path, options, progress or (lambda event: None), cancel)
     title = options.book_title or doc.title
-    chunks = make_chunks(doc, min_chars=options.min_chars)
+    chunks = make_chunks(doc, min_chars=0 if options.source == "notes" else options.min_chars)
     task_id = store.create_task(input_path, title, template.id, params, dataclasses.asdict(options), len(doc.pages),
                                 chunks)
     store.set_task_status(task_id, RUNNING, elapsed_delta=time.monotonic() - start)

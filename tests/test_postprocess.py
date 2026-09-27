@@ -38,3 +38,33 @@ def test_check_grounding_combines_fields():
 
 def test_dedup_key_ignores_case_width_and_space():
     assert dedup_key({"word": " Alleviate "}, "word") == dedup_key({"word": "alleviate"}, "word")
+
+
+# ---------------------------------------------------------------------- 填空卡、选择题
+from cardmaker.pipeline.postprocess import add_mcq_options, cloze_answers  # noqa: E402
+
+LAW = "第三条 本科生每人最多可同时借阅图书十册，借期为三十日。"
+
+
+def test_cloze_answers():
+    assert cloze_answers("借期为{{c1::三十日}}，最多{{c2::十册::数量}}") == ["三十日", "十册"]
+
+
+def test_cloze_answers_must_come_from_source():
+    good = {"text": "本科生借期为{{c1::三十日}}。", "quote": LAW}
+    invented = {"text": "本科生借期为{{c1::四十五日}}。", "quote": LAW}
+    no_blank = {"text": "本科生借期为三十日。", "quote": LAW}
+    assert check_grounding(good, ["quote"], LAW, ["text"]) == EXACT
+    assert check_grounding(invented, ["quote"], LAW, ["text"]) is None  # 编造的答案
+    assert check_grounding(no_blank, ["quote"], LAW, ["text"]) is None  # 没有挖空
+
+
+def test_mcq_options_shuffled_but_answer_correct():
+    item = {"question": "本科生借期是多久？", "correct": "三十日", "distractors": ["十五日", "六十日", "九十日"]}
+    result = add_mcq_options(item)
+    options = [result[f"option_{x}"] for x in "abcd"]
+    assert sorted(options) == sorted(["三十日", "十五日", "六十日", "九十日"])
+    assert result[f"option_{result['answer'].lower()}"] == "三十日"
+    assert add_mcq_options(item) == result  # 同一道题每次顺序一样
+    answers = {add_mcq_options({**item, "question": f"第{i}题"})["answer"] for i in range(30)}
+    assert len(answers) >= 3  # 正确答案不会总在同一个位置

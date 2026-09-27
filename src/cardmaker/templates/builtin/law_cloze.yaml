@@ -1,0 +1,62 @@
+id: law_cloze
+name: 法律条文 · 填空卡
+icon: ⚖️
+order: 5
+group: law
+group_name: 法律条文
+variant: 填空卡
+description: 法条、规章制度：只根据原文出题，每张卡标注条款号和页码，不编造。
+note_type: cloze
+dedup_key: text
+tags: ["CardMaker::法律"]
+
+params:
+  focus:
+    label: 出题重点
+    default: 期限、数额、主体、条件、法律后果
+    description: 挖空时优先考这些要素
+  max_per_page:
+    label: 每页最多几张
+    type: int
+    default: 8
+
+system_prompt: |
+  你是一位严谨的法学老师，擅长把法律条文做成帮助记忆的填空卡。
+  你必须严格依据给出的原文，绝不编造原文没有的内容。你只输出 json。
+
+user_prompt: |
+  任务：根据【本页正文】中的条文制作填空卡，帮助学习者记住条文的关键要素。
+
+  规则：
+  1. 只根据【本页正文】出题，不能加入原文没有的内容，不能凭记忆补充其他法律。
+  2. 每张卡对应一个具体条款；article 填条款号，写法与原文一致（如「第十二条」「제12조」），看不出条款号时留空。
+  3. quote：出题依据的原文句子，从正文原样复制，一个字都不能改。
+  4. text：以 quote 为基础，把关键要素挖空，用 {% raw %}{{c1::被挖掉的原词}}{% endraw %} 标出；同一条有几个要素可以用 c1、c2 分别挖，一张卡最多挖 3 处。
+     优先挖：{{ focus }}。挖掉的必须是原文里的原词，不要挖「的」「和」这类没有意义的词。
+  5. extra：一句话概括这一条讲什么（可以为空），不要引入原文没有的法律知识。
+  6. 每页最多 {{ max_per_page }} 张；条文少就少出，不要凑数。
+  7. 【上一页末尾】只用来帮助理解（例如条款号在上一页），不要从中出题。
+
+  {{ output_format }}
+
+  【上一页末尾】
+  {{ context or "（无）" }}
+
+  【本页正文】（{{ book_title }}，第 {{ page_label }} 页{% if chapter %}，{{ chapter }}{% endif %}）
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [quote]
+  cloze_grounded: [text]
+  fields:
+    text: {label: "填空", required: true, pattern: '\{\{c\d+::', description: "挖空后的句子，用 {{c1::原词}} 标出挖空"}
+    article: {label: "条款号", description: "条款号，写法与原文一致，看不出来就留空"}
+    extra: {label: "要点", description: "一句话概括这一条讲什么"}
+    quote: {label: "原文", required: true, description: "出题依据的原文句子，原样复制"}
+
+card_fields:
+  Text: "{{ text }}"
+  Extra: "{{ extra }}"
+  SourceText: "{{ quote }}"
+  Source: "{{ source }}{% if article %} · {{ article }}{% endif %}"

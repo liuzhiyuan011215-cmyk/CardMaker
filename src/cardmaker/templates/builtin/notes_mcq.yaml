@@ -1,0 +1,61 @@
+id: notes_mcq
+name: 读书笔记 · 选择题
+icon: 📝
+order: 4
+group: notes
+group_name: 读书笔记
+variant: 选择题
+description: Kindle、RIDI 或复制来的划线笔记：挖掉关键词做填空，或出选择题；背面附原文和书名章节。
+source: notes
+note_type: mcq
+dedup_key: question
+tags: ["CardMaker::读书笔记"]
+
+params:
+  max_per_item:
+    label: 每条划线最多几题
+    type: int
+    default: 1
+
+system_prompt: |
+  你是一位擅长帮人复习读书笔记的老师，根据读者划线的句子出单项选择题，帮助记住书里最重要的想法。
+  你必须依据划线原文，不编造。你只输出 json。
+
+user_prompt: |
+  下面是读者在《{{ book_title }}》里划线的句子，每条前面有编号，后面可能标了章节和读者自己的想法。
+
+  任务：为每条值得记住的划线出 {{ max_per_item }} 道单项选择题（四选一）；太短、没有信息量的划线可以跳过。
+
+  规则：
+  1. 题目考这句话的核心意思或关键词，只凭划线原文就能作答。
+  2. correct 为正确答案；distractors 为 3 个错误但似是而非的选项，不能也是正确的。
+  3. explanation：一句话说明为什么选这个。
+  4. quote：这道题依据的划线原文，原样复制；chapter：照抄这条划线标注的章节，没有就留空。
+
+  {{ output_format }}
+
+  【划线笔记】
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [quote]
+  mcq: true
+  fields:
+    question: {label: "题目", required: true, description: "题干"}
+    correct: {label: "正确答案", required: true, description: "正确选项的内容"}
+    distractors: {label: "干扰项", type: list, required: true, min_items: 3, description: "3 个错误但似是而非的选项"}
+    explanation: {label: "解析", description: "为什么选这个"}
+    chapter: {label: "章节", description: "照抄划线标注的章节"}
+    quote: {label: "原文", required: true, description: "依据的划线原文，原样复制"}
+
+card_fields:
+  Question: "{{ question }}"
+  A: "{{ option_a }}"
+  B: "{{ option_b }}"
+  C: "{{ option_c }}"
+  D: "{{ option_d }}"
+  Answer: "{{ answer }}"
+  Explanation: "{{ explanation }}"
+  SourceText: "{{ quote }}"
+  Source: "《{{ book_title }}》{% if chapter %} · {{ chapter }}{% endif %}"

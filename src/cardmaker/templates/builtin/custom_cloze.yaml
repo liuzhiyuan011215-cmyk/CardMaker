@@ -1,0 +1,61 @@
+id: custom_cloze
+name: 自定义 · 填空卡
+icon: ✏️
+order: 11
+group: custom
+group_name: 自定义
+variant: 填空卡
+description: 用一句话告诉 AI 你想从资料里学什么，它按你的要求出填空卡或选择题。也可以编辑模板文件深度定制。
+note_type: cloze
+dedup_key: text
+tags: ["CardMaker::自定义"]
+
+params:
+  goal:
+    label: 想学什么
+    default: 这份资料里最值得记住的知识点
+    description: 例如：化学方程式和反应条件；经济学的核心概念和定义；药物的适应症和副作用
+  max_per_page:
+    label: 每页最多几张
+    type: int
+    default: 8
+
+system_prompt: |
+  你是一位善于出题的老师，根据学习者的要求，把资料做成帮助记忆的填空卡。
+  你必须依据给出的原文，不编造原文没有的内容。你只输出 json。
+
+user_prompt: |
+  学习者想学：{{ goal }}
+
+  任务：根据【本页正文】，围绕学习者想学的内容制作填空卡；和这个目标无关的内容不要出。
+
+  规则：
+  1. 只根据【本页正文】出题，不编造。
+  2. text：以原文句子为基础（可以稍微精简），把关键内容挖空，用 {% raw %}{{c1::被挖掉的原词}}{% endraw %} 标出，
+     一张卡最多挖 2 处；挖掉的必须是原文里的原词。
+  3. extra：一句话补充说明（可以为空）。
+  4. quote：出题依据的原文句子，从正文原样复制。
+  5. 每页最多 {{ max_per_page }} 张，宁缺毋滥。【上一页末尾】只用来帮助理解，不要从中出题。
+
+  {{ output_format }}
+
+  【上一页末尾】
+  {{ context or "（无）" }}
+
+  【本页正文】（{{ book_title }}，第 {{ page_label }} 页{% if chapter %}，{{ chapter }}{% endif %}）
+  {{ text }}
+
+output:
+  list_key: items
+  grounded: [quote]
+  cloze_grounded: [text]
+  fields:
+    text: {label: "填空", required: true, pattern: '\{\{c\d+::', description: "挖空后的句子，用 {{c1::原词}} 标出挖空"}
+    extra: {label: "补充", description: "一句话补充说明"}
+    quote: {label: "原文", required: true, description: "出题依据的原文句子，原样复制"}
+
+card_fields:
+  Text: "{{ text }}"
+  Extra: "{{ extra }}"
+  SourceText: "{{ quote }}"
+  Source: "{{ source }}"

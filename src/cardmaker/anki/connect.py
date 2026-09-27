@@ -89,9 +89,14 @@ class AnkiConnect:
     def create_deck(self, name: str) -> int:
         return self.invoke("createDeck", deck=name)  # 已存在时直接返回它的 id
 
-    def create_model(self, name: str, fields: list[str], templates: list[dict], css: str) -> dict:
-        return self.invoke("createModel", modelName=name, inOrderFields=fields, css=css, isCloze=False,
+    def create_model(self, name: str, fields: list[str], templates: list[dict], css: str,
+                     is_cloze: bool = False) -> dict:
+        return self.invoke("createModel", modelName=name, inOrderFields=fields, css=css, isCloze=is_cloze,
                            cardTemplates=templates)
+
+    def store_media_file(self, path) -> str:
+        """把本地音频文件放进 Anki 的媒体文件夹（同名文件会被覆盖，文件名带内容哈希，所以不会误覆盖）。"""
+        return self.invoke("storeMediaFile", filename=path.name, path=str(path))
 
     def add_notes(self, notes: list[dict]) -> list[int | None]:
         """批量添加；如果整批被拒绝（新版 AnkiConnect 有一条失败就整体报错），改为逐条添加。"""

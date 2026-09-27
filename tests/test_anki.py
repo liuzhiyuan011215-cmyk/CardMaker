@@ -11,7 +11,7 @@ from cardmaker.pipeline.result import Card
 
 # 导入过程允许调用的接口：只有查询和「新增」，没有任何修改或删除
 SAFE_ACTIONS = {"version", "deckNames", "modelNames", "modelFieldNames", "createDeck", "createModel",
-                "canAddNotesWithErrorDetail", "canAddNotes", "addNotes", "addNote"}
+                "canAddNotesWithErrorDetail", "canAddNotes", "addNotes", "addNote", "storeMediaFile"}
 
 
 class FakeAnki:
@@ -51,10 +51,19 @@ class FakeAnki:
 
     def do_createModel(self, modelName, inOrderFields, css, isCloze, cardTemplates):
         self.models[modelName] = inOrderFields
+        self.cloze_models = getattr(self, "cloze_models", set()) | ({modelName} if isCloze else set())
         return {"name": modelName}
 
+    def do_storeMediaFile(self, filename, path):
+        self.media = getattr(self, "media", []) + [filename]
+        return filename
+
+    @staticmethod
+    def _first_field(note):
+        return next(iter(note["fields"].values()))  # Anki 按第一个字段判断重复
+
     def _is_dup(self, note):
-        return note["fields"]["Front"] in self.fronts
+        return self._first_field(note) in self.fronts
 
     def do_canAddNotesWithErrorDetail(self, notes):
         return [{"canAdd": False, "error": "cannot create note because it is a duplicate"} if self._is_dup(n)
@@ -66,7 +75,7 @@ class FakeAnki:
     def do_addNotes(self, notes):
         ids = []
         for note in notes:
-            self.fronts.add(note["fields"]["Front"])
+            self.fronts.add(self._first_field(note))
             self.added.append(note)
             ids.append(len(self.added))
         return ids
@@ -177,3 +186,46 @@ def test_apkg_export(tmp_path, forward, reverse, cards_per_note):
 def test_stable_ids():
     assert stable_id("model:CardMaker 单词") == stable_id("model:CardMaker 单词")
     assert (1 << 30) <= stable_id("x") < (1 << 31)
+
+
+# ---------------------------------------------------------------------- 填空卡、选择题、发音文件
+from cardmaker.anki import CLOZE, MCQ  # noqa: E402
+
+
+def cloze_card(text):
+    return Card({"Text": text, "Extra": "", "SourceText": "原文", "Source": "《书》"}, {}, "1")
+
+
+def test_cloze_note_type_created_as_cloze():
+    fake = FakeAnki()
+    report = import_to_anki(AnkiConnect(transport=fake), [cloze_card("借期为{{c1::三十日}}")], "cloze", [], "书",
+                            ImportOptions(deck="d"))
+    assert report.statuses == [ADDED] and fake.cloze_models == {CLOZE.name}
+    assert "CardForward" not in fake.added[0]["fields"]  # 填空卡没有方向字段
+
+
+def test_media_uploaded_before_notes(tmp_path):
+    audio = tmp_path / "cardmaker_abc.mp3"
+    audio.write_bytes(b"ID3")
+    fake = FakeAnki()
+    import_to_anki(AnkiConnect(transport=fake), make_cards("합의"), "vocab", [], "书", ImportOptions(deck="d"),
+                   media=[audio])
+    assert fake.media == ["cardmaker_abc.mp3"]
+    assert fake.calls.index("storeMediaFile") < fake.calls.index("addNotes")
+
+
+def test_apkg_cloze_one_card_per_blank(tmp_path):
+    path = export_apkg([cloze_card("{{c1::借期}}为{{c2::三十日}}"), cloze_card("最多{{c1::十册}}")], "cloze", [], "书",
+                       ImportOptions(deck="d"), tmp_path / "cloze.apkg")
+    assert _apkg_counts(path) == (2, 3)
+
+
+def test_apkg_mcq_and_media(tmp_path):
+    audio = tmp_path / "cardmaker_x.mp3"
+    audio.write_bytes(b"ID3")
+    card = Card({"Question": "借期？", "A": "十日", "B": "三十日", "C": "六十日", "D": "九十日", "Answer": "B"}, {}, "1")
+    path = export_apkg([card], "mcq", [], "书", ImportOptions(deck="d"), tmp_path / "mcq.apkg", media=[audio])
+    assert _apkg_counts(path) == (1, 1)
+    with zipfile.ZipFile(path) as z:
+        assert "cardmaker_x.mp3" in z.read("media").decode()
+    assert MCQ.fields[0] == "Question"

@@ -1,6 +1,8 @@
 """模型输出的后处理：原文校验（防编造）、去重、数量上限。"""
 from __future__ import annotations
 
+import hashlib
+import random
 import re
 import unicodedata
 from difflib import SequenceMatcher
@@ -40,16 +42,45 @@ def locate(value: str, source: str) -> str | None:
     return APPROX if best >= APPROX_RATIO else None
 
 
-def check_grounding(item: dict, fields: list[str], source: str) -> str | None:
-    """检查条目中所有需要校验的字段。全部原样出现 → exact；有模糊匹配 → approx；任一找不到 → None。"""
+CLOZE = re.compile(r"\{\{c\d+::(.*?)(?:::(.*?))?\}\}", re.S)
+
+
+def cloze_answers(text: str) -> list[str]:
+    """取出 {{c1::答案}} 或 {{c1::答案::提示}} 里的答案。"""
+    return [m.group(1) for m in CLOZE.finditer(text)]
+
+
+def check_grounding(item: dict, fields: list[str], source: str, cloze_fields: list[str] = ()) -> str | None:
+    """检查条目中所有需要校验的字段。全部原样出现 → exact；有模糊匹配 → approx；任一找不到 → None。
+
+    cloze_fields：填空卡的挖空答案必须来自原文（这些字段合起来至少要有一处挖空）。
+    """
+    values = [str(item.get(name) or "") for name in fields]
+    answers = [a for name in cloze_fields for a in cloze_answers(str(item.get(name) or ""))]
+    if cloze_fields and not answers:
+        return None
     result = EXACT
-    for name in fields:
-        value = item.get(name) or ""
-        found = locate(str(value), source)
+    for value in values + answers:
+        found = locate(value, source)
         if found is None:
             return None
         if found == APPROX:
             result = APPROX
+    return result
+
+
+def add_mcq_options(item: dict) -> dict:
+    """选择题：把正确答案和 3 个干扰项打乱成 A–D，并记下正确答案的字母。
+
+    用题目做随机种子，同一道题每次打乱的顺序都一样（重新生成、编辑后不会变来变去）。
+    """
+    options = [str(item.get("correct", "")), *[str(d) for d in item.get("distractors", [])[:3]]]
+    order = list(range(len(options)))
+    random.Random(hashlib.sha1(str(item.get("question", "")).encode("utf-8")).hexdigest()).shuffle(order)
+    result = dict(item)
+    for letter, index in zip("abcd", order):
+        result[f"option_{letter}"] = options[index]
+    result["answer"] = "ABCD"[order.index(0)]
     return result
 
 
