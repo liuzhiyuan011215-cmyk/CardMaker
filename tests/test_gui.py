@@ -52,6 +52,19 @@ def test_table_edit_rerenders_card_fields(app, template):
     assert not model.flags(model.index(0, kind_col)) & Qt.ItemFlag.ItemIsEditable
 
 
+def test_table_shows_dictionary_check(app, template):
+    checked, plain = make_card(template), make_card(template)
+    checked.context["dict_check"] = {"status": "corrected", "source": "한국어기초사전", "original": "船",
+                                     "sense": "배3 (명사) 1. 梨：배나무의 열매."}
+    model = CardTableModel([checked, plain], template)
+    col = len(model.columns) + 1
+    assert model.headerData(col, Qt.Orientation.Horizontal) == "词典"
+    assert model.data(model.index(0, col)) == "已按词典更正" and model.data(model.index(1, col)) == ""
+    assert "原来的释义：船" in model.data(model.index(0, col), Qt.ItemDataRole.ToolTipRole)
+    assert not model.flags(model.index(0, col)) & Qt.ItemFlag.ItemIsEditable
+    assert CardTableModel([plain], template).columnCount() == col  # 没有核对结果时不显示这一列
+
+
 def test_table_checkbox_and_delete(app, template):
     cards = [make_card(template), make_card(template)]
     model = CardTableModel(cards, template)
@@ -80,7 +93,7 @@ def test_worker_generates_with_progress(app, make_pdf, template):
     worker.finished.connect(results.append)
     worker.run()  # 测试里直接同步运行
     assert len(results) == 1 and len(results[0].cards) == 1
-    assert events[-1].stage == "generate" and events[-1].cards == 1
+    assert [e for e in events if e.stage == "generate"][-1].cards == 1
 
 
 def test_worker_reports_bad_key(app, make_pdf, template):

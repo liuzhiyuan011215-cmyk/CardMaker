@@ -1,9 +1,16 @@
 """发音：用假的 HTTP 测试，不花钱、不联网。"""
+import subprocess
+import wave
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
+from cardmaker.config import Settings
 from cardmaker.pipeline.result import Card
 from cardmaker import tts as tts_module
-from cardmaker.tts import DashScopeTTS, TTSError, TTSRateLimited, add_audio, detect_language, plain_text
+from cardmaker.tts import (DashScopeTTS, QwenLocalTTS, SystemTTS, TTSError, TTSRateLimited, add_audio,
+                           detect_language, make_tts, plain_text)
 
 VOICES = {"ko": "ko_voice", "zh": "zh_voice", "en": "en_voice"}
 
@@ -78,3 +85,49 @@ def test_rate_limit_is_retried(tmp_path, monkeypatch):
 
     tts = DashScopeTTS("sk-test", "m", VOICES, cache_dir=tmp_path, post=post, get=lambda url, timeout: b"ID3")
     assert tts.audio_for("합의").read_bytes() == b"ID3" and len(calls) == 3
+
+
+def test_system_voice_is_free_and_cached(tmp_path):
+    calls = []
+
+    def fake_say(args, **kwargs):
+        calls.append(args)
+        Path(args[args.index("-o") + 1]).write_bytes(b"m4a-audio")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    tts = SystemTTS(cache_dir=tmp_path, run=fake_say)
+    path = tts.audio_for("배를 깎아 먹었다.")
+    assert path.suffix == ".m4a" and path.read_bytes() == b"m4a-audio"
+    assert calls[0][:3] == ["say", "-v", "Yuna"] and calls[0][-1] == "배를 깎아 먹었다."  # 韩语用韩语音色
+    tts.audio_for("배를 깎아 먹었다.")
+    assert len(calls) == 1  # 第二次走缓存
+
+
+def test_make_tts_uses_system_voice_without_key():
+    settings = Settings()  # 没有百炼 Key（例如只用本地模型）
+    assert isinstance(make_tts(settings), SystemTTS)
+    settings.llm.api_key = "sk-test"
+    assert isinstance(make_tts(settings), DashScopeTTS)
+    settings.tts.engine = "system"
+    assert isinstance(make_tts(settings), SystemTTS)
+
+
+def test_local_qwen_tts_loads_the_model_once_and_writes_wav(tmp_path):
+    loads, calls = [], []
+
+    class FakeModel:
+        def generate(self, text, voice, lang_code, max_tokens):
+            calls.append((text, voice, lang_code))
+            yield SimpleNamespace(audio=[0.0, 0.5, -0.5], sample_rate=24000)
+
+    def load(repo):
+        loads.append(repo)
+        return FakeModel()
+
+    tts = QwenLocalTTS(cache_dir=tmp_path, load=load)
+    path = tts.audio_for("배를 깎아 먹었다.")
+    tts.audio_for("alleviate")
+    assert loads == [QwenLocalTTS.MODEL]
+    assert calls == [("배를 깎아 먹었다.", "Sohee", "korean"), ("alleviate.", "Aiden", "english")]  # 单词补上句号
+    with wave.open(str(path)) as audio:
+        assert (audio.getframerate(), audio.getnframes()) == (24000, 3)

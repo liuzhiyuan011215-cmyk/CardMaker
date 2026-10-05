@@ -12,9 +12,10 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QFil
 from ..anki import AnkiConnect, ImportOptions, ImportReport, export_apkg, has_directions, import_to_anki
 from ..anki.exporter import card_tags
 from ..config import Settings
+from ..i18n import tr
 from ..pipeline.result import Card
 from ..templates.loader import Template
-from ..tts import DashScopeTTS, TTSError, add_audio
+from ..tts import CachedTTS, TTSError, add_audio, make_tts
 from .widgets import label
 from .worker import ProgressTask
 
@@ -27,13 +28,13 @@ DIRECTIONS = [("外语→释义（看单词，口头说意思）", True, False),
 class AnkiImportDialog(QDialog):
     def __init__(self, parent, cards: list[Card], template: Template, book_title: str, settings: Settings,
                  client: AnkiConnect | None = None, autostart: bool = True,
-                 tts_factory: Callable[[], DashScopeTTS] | None = None):
+                 tts_factory: Callable[[], CachedTTS] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("导入 Anki")
+        self.setWindowTitle(tr("导入 Anki"))
         self.setMinimumWidth(640)
         self.cards, self.template, self.book_title, self.settings = cards, template, book_title, settings
         self.client = client or AnkiConnect(settings.anki_url)
-        self.tts_factory = tts_factory or (lambda: DashScopeTTS.from_settings(settings))
+        self.tts_factory = tts_factory or (lambda: make_tts(settings))
         self.connected = False
         self.report: ImportReport | None = None
         self.audio_errors: list[str] = []
@@ -46,7 +47,7 @@ class AnkiImportDialog(QDialog):
 
         status_row = QHBoxLayout()
         self.status = label("正在连接 Anki…", "Hint", wrap=True)
-        self.retry = QPushButton("重新检测")
+        self.retry = QPushButton(tr("重新检测"))
         self.retry.clicked.connect(lambda: self.start_check())
         self.retry.hide()
         status_row.addWidget(self.status, 1)
@@ -58,8 +59,8 @@ class AnkiImportDialog(QDialog):
         self.deck = QComboBox()
         self.deck.setEditable(True)
         self.deck.setCurrentText(f"{settings.default_deck}::{book_title}")
-        self.deck.setToolTip("可以选已有的牌组，也可以直接输入新名字；用 :: 表示子牌组")
-        form.addRow("放进牌组", self.deck)
+        self.deck.setToolTip(tr("可以选已有的牌组，也可以直接输入新名字；用 :: 表示子牌组"))
+        form.addRow(tr("放进牌组"), self.deck)
 
         vocab = has_directions(template.note_type)
         self.direction_widget = QWidget()
@@ -67,27 +68,27 @@ class AnkiImportDialog(QDialog):
         direction_box.setContentsMargins(0, 0, 0, 0)
         self.direction_group = QButtonGroup(self)
         for i, (text, _, _) in enumerate(DIRECTIONS):
-            radio = QRadioButton(text)
+            radio = QRadioButton(tr(text))
             self.direction_group.addButton(radio, i)
             direction_box.addWidget(radio)
         self.direction_group.button(2).setChecked(True)
         if vocab:
-            form.addRow("卡片方向", self.direction_widget)
+            form.addRow(tr("卡片方向"), self.direction_widget)
         else:
             self.direction_widget.hide()
 
-        self.audio_box = QCheckBox("单词和例句都配上发音（百炼语音合成，同样的内容只合成一次）")
+        self.audio_box = QCheckBox(tr("单词和例句都配上发音（同样的内容只生成一次）"))
         self.audio_box.setChecked(settings.tts.enabled)
         if vocab:
-            form.addRow("发音", self.audio_box)
+            form.addRow(tr("发音"), self.audio_box)
         else:
             self.audio_box.hide()
 
         self.extra_tags = QLineEdit()
-        self.extra_tags.setPlaceholderText("可选，多个标签用空格隔开，例如：自学单词 期末")
-        form.addRow("额外标签", self.extra_tags)
+        self.extra_tags.setPlaceholderText(tr("可选，多个标签用空格隔开，例如：自学单词 期末"))
+        form.addRow(tr("额外标签"), self.extra_tags)
         tags = card_tags(cards[0], template.spec.tags, book_title) if cards else []
-        form.addRow("自动标签", label("  ".join(tags), "Hint", wrap=True))
+        form.addRow(tr("自动标签"), label("  ".join(tags), "Hint", wrap=True))
         layout.addLayout(form)
 
         self.result_label = label("", "Big", wrap=True)
@@ -95,19 +96,19 @@ class AnkiImportDialog(QDialog):
         layout.addWidget(self.result_label)
 
         buttons = QHBoxLayout()
-        self.apkg_button = QPushButton("导出 .apkg 文件…")
-        self.apkg_button.setToolTip("不打开 Anki 也能用：导出后双击这个文件就会导入 Anki")
+        self.apkg_button = QPushButton(tr("导出 .apkg 文件…"))
+        self.apkg_button.setToolTip(tr("不打开 Anki 也能用：导出后双击这个文件就会导入 Anki"))
         self.apkg_button.clicked.connect(self.choose_apkg_path)
         buttons.addWidget(self.apkg_button)
         buttons.addStretch()
-        self.close_button = QPushButton("取消")
+        self.close_button = QPushButton(tr("取消"))
         self.close_button.clicked.connect(self.reject)
         buttons.addWidget(self.close_button)
-        self.browse_button = QPushButton("在 Anki 里查看")
+        self.browse_button = QPushButton(tr("在 Anki 里查看"))
         self.browse_button.clicked.connect(self.browse_in_anki)
         self.browse_button.hide()
         buttons.addWidget(self.browse_button)
-        self.import_button = QPushButton("导入 Anki")
+        self.import_button = QPushButton(tr("导入 Anki"))
         self.import_button.setObjectName("Primary")
         self.import_button.setEnabled(False)
         self.import_button.clicked.connect(lambda: self.start_import())
@@ -119,7 +120,7 @@ class AnkiImportDialog(QDialog):
 
     # ------------------------------------------------------------------ 检测 Anki
     def start_check(self, background: bool = True) -> None:
-        self.status.setText("正在连接 Anki…")
+        self.status.setText(tr("正在连接 Anki…"))
         self.retry.hide()
         self.import_button.setEnabled(False)
         self._run(lambda report: self.client.deck_names(), self.on_connected, self.on_unavailable, background)
@@ -130,14 +131,14 @@ class AnkiImportDialog(QDialog):
         self.deck.clear()
         self.deck.addItems(sorted(decks))
         self.deck.setCurrentText(current)
-        self.status.setText("✅ 已连接 Anki。牌组、笔记类型会自动创建；Anki 里已有的卡片会自动跳过。")
+        self.status.setText(tr("✅ 已连接 Anki。牌组、笔记类型会自动创建；Anki 里已有的卡片会自动跳过。"))
         self.import_button.setEnabled(bool(self.cards))
 
     def on_unavailable(self, message: str) -> None:
         self.connected = False
-        self.status.setText("⚠️ 没有连上 Anki。请先打开 Anki，并确认装了 AnkiConnect 插件"
+        self.status.setText(tr("⚠️ 没有连上 Anki。请先打开 Anki，并确认装了 AnkiConnect 插件"
                             f"（Anki 菜单：工具 → 插件 → 获取插件，代码 {ANKICONNECT_CODE}），然后点「重新检测」。\n"
-                            "也可以先导出 .apkg 文件，以后双击它导入。")
+                            "也可以先导出 .apkg 文件，以后双击它导入。"))
         self.retry.show()
 
     # ------------------------------------------------------------------ 导入
@@ -168,7 +169,7 @@ class AnkiImportDialog(QDialog):
         options = self.options()
         self.import_button.setEnabled(False)
         self.apkg_button.setEnabled(False)
-        self.status.setText("正在导入…")
+        self.status.setText(tr("正在导入…"))
 
         def job(report):
             media = self.prepare_audio(report)
@@ -187,22 +188,22 @@ class AnkiImportDialog(QDialog):
             text += "\n🔊 已配上发音。" if not self.audio_errors else f"\n🔊 有 {len(self.audio_errors)} 条发音没生成：{self.audio_errors[0]}"
         if report.errors:
             text += "\n失败原因：" + "；".join(report.errors[:3])
-        self.status.setText("导入完成。")
-        self.result_label.setText(text)
+        self.status.setText(tr("导入完成。"))
+        self.result_label.setText(tr(text))
         self.result_label.show()
-        self.close_button.setText("完成")
+        self.close_button.setText(tr("完成"))
         self.close_button.clicked.disconnect()
         self.close_button.clicked.connect(self.accept)
         self.import_button.hide()
         self.browse_button.show()
 
     def on_import_failed(self, message: str) -> None:
-        self.status.setText(f"❌ 导入失败：{message}")
+        self.status.setText(tr(f"❌ 导入失败：{message}"))
         self.import_button.setEnabled(self.connected)
         self.apkg_button.setEnabled(True)
 
     def on_progress(self, message: str) -> None:
-        self.status.setText(message)
+        self.status.setText(tr(message))
 
     def browse_in_anki(self) -> None:
         if self.report:
@@ -211,15 +212,15 @@ class AnkiImportDialog(QDialog):
                       self._on_browse_failed, True)
 
     def _on_browse_opened(self, _result) -> None:
-        self.status.setText("已在 Anki 里打开浏览窗口。")
+        self.status.setText(tr("已在 Anki 里打开浏览窗口。"))
 
     def _on_browse_failed(self, message: str) -> None:
-        self.status.setText(f"打不开 Anki 浏览窗口：{message}")
+        self.status.setText(tr(f"打不开 Anki 浏览窗口：{message}"))
 
     # ------------------------------------------------------------------ .apkg
     def choose_apkg_path(self) -> None:
         default = Path.home() / "Desktop" / f"{self.book_title}.apkg"
-        path, _ = QFileDialog.getSaveFileName(self, "导出 .apkg 文件", str(default), "Anki 牌组包 (*.apkg)")
+        path, _ = QFileDialog.getSaveFileName(self, tr("导出 .apkg 文件"), str(default), tr("Anki 牌组包 (*.apkg)"))
         if not path:
             return
         self.apkg_button.setEnabled(False)
@@ -235,12 +236,12 @@ class AnkiImportDialog(QDialog):
     def on_exported(self, path: Path) -> None:
         self.apkg_button.setEnabled(True)
         self.import_button.setEnabled(self.connected)
-        self.status.setText("已导出。")
+        self.status.setText(tr("已导出。"))
         box = QMessageBox(self)
-        box.setWindowTitle("已导出")
-        box.setText(f"已导出 {len(self.cards)} 张卡片：\n{path}\n\n双击这个文件就会导入 Anki。")
-        reveal = box.addButton("在访达中显示", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("好", QMessageBox.ButtonRole.RejectRole)
+        box.setWindowTitle(tr("已导出"))
+        box.setText(tr(f"已导出 {len(self.cards)} 张卡片：\n{path}\n\n双击这个文件就会导入 Anki。"))
+        reveal = box.addButton(tr("在访达中显示"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(tr("好"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is reveal:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))

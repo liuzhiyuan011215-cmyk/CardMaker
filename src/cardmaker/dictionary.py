@@ -1,0 +1,261 @@
+"""查词典，用来核对大模型给单词写的释义（见 pipeline/meaning_check.py）。按单词的语言自动选：
+
+- 韩语单词：国立国语院《韩国语基础词典》（한국어기초사전，krdict）开放 API。
+  Key 免费申请：krdict.korean.go.kr → 오픈 API → 인증키 신청，只要填邮箱；每天最多查 5 万次。
+  每个义项都带中文（或英文、日文）译词，可以直接和卡片上的释义比对。
+  请求网址里带着 Key，所以出错时只报原因，不记录也不显示网址。
+- 英语、中文（以及没填 Key 时的韩语）单词：维基词典（kaikki.org 整理好的 JSON），不用 Key、不用注册。
+  义项释义是英语的，和卡片释义的比对交给模型。内容授权 CC BY-SA。
+- 查过的词存在本地缓存（SQLite），同一个词只查一次。
+"""
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+from .config import app_home
+from .tts import detect_language
+
+SEARCH_URL = "https://krdict.korean.go.kr/api/search"
+SOURCE_NAME = "한국어기초사전"
+WIKTIONARY_URL = "https://kaikki.org/dictionary/{lang}/meaning/{path}.jsonl"
+WIKTIONARY_NAME = "Wiktionary"
+WIKTIONARY_LANGS = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean"}  # 单词的语言 → kaikki 的目录
+# 卡片的释义语言 → (接口的 trans_lang 编号, 返回结果里的语言名)
+TRANS_LANGS = {"中文": (11, "중국어"), "英语": (1, "영어"), "日语": (2, "일본어")}
+ERROR_HINTS = {
+    "010": "今天的词典查询次数已用完（每天 5 万次），明天会自动恢复",
+    "020": "词典 Key 不正确或还没生效，请在「设置」里检查",
+    "021": "词典 Key 已被停用，请重新申请",
+}
+
+
+class DictError(Exception):
+    pass
+
+
+@dataclass
+class Sense:
+    order: int
+    definition: str  # 韩语释义
+    trans_word: str = ""  # 译词，例如「梨」
+    trans_dfn: str = ""  # 译文释义
+
+
+@dataclass
+class Entry:
+    target_code: str
+    word: str
+    sup_no: int  # 同形词编号：배¹（肚子）、배²（船）、배³（梨）……0 表示没有同形词
+    pos: str
+    senses: list[Sense] = field(default_factory=list)
+    link: str = ""
+    source: str = SOURCE_NAME
+
+    @property
+    def label(self) -> str:
+        return f"{self.word}{self.sup_no}" if self.sup_no else self.word
+
+
+def supports(meaning_language: str) -> bool:
+    return meaning_language in TRANS_LANGS
+
+
+def _text(node: ET.Element | None, tag: str) -> str:
+    return " ".join((node.findtext(tag) or "").split()) if node is not None else ""
+
+
+def parse_search(xml_text: str, lang_name: str) -> list[Entry]:
+    """解析搜索接口返回的 XML。接口报错（例如 Key 不对）时抛 DictError。"""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        raise DictError(f"词典返回的内容无法解析：{exc}") from None
+    if root.tag == "error":
+        code = _text(root, "error_code")
+        raise DictError(ERROR_HINTS.get(code) or f"词典接口报错（{code}）：{_text(root, 'message')}")
+    entries = []
+    for item in root.iter("item"):
+        senses = []
+        for node in item.findall("sense"):
+            translations = node.findall("translation")
+            # 只要请求的那种语言；接口没写语言名时就都要
+            picked = [t for t in translations if _text(t, "trans_lang") == lang_name] or translations
+            senses.append(Sense(
+                order=int(_text(node, "sense_order") or 0),
+                definition=_text(node, "definition"),
+                trans_word="；".join(w for w in (_text(t, "trans_word") for t in picked) if w),
+                trans_dfn=" ".join(d for d in (_text(t, "trans_dfn") for t in picked) if d)))
+        sup = _text(item, "sup_no")
+        entries.append(Entry(_text(item, "target_code"), _text(item, "word"), int(sup) if sup.isdigit() else 0,
+                             _text(item, "pos"), senses, _text(item, "link")))
+    return entries
+
+
+def _fetch(params: dict, timeout: float) -> str:
+    url = f"{SEARCH_URL}?{urllib.parse.urlencode(params)}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        raise DictError(f"词典服务出错（HTTP {exc.code}）") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise DictError(f"连不上词典服务：{reason}") from None
+
+
+def lookup_key(word: str) -> str:
+    """卡片上的单词 → 查词典用的词：去掉括号里的注释，「A/B」只查 A。"""
+    word = re.sub(r"[（(\[【].*?[）)\]】]", "", word or "")
+    return word.split("/")[0].strip()
+
+
+class _Cache:
+    """查过的词存在本地 SQLite 里，重启后也在。"""
+
+    def __init__(self, path: Path | None):
+        path = path or app_home() / "dict_cache.sqlite"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(str(path), check_same_thread=False)
+        self._db.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, entries TEXT NOT NULL)")
+
+    def get(self, key: str) -> list[Entry] | None:
+        with self._lock:
+            row = self._db.execute("SELECT entries FROM cache WHERE key = ?", (key,)).fetchone()
+        return [Entry(**{**e, "senses": [Sense(**s) for s in e["senses"]]}) for e in json.loads(row[0])] if row else None
+
+    def put(self, key: str, entries: list[Entry]) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO cache VALUES (?, ?)",
+                             (key, json.dumps([asdict(e) for e in entries], ensure_ascii=False)))
+            self._db.commit()
+
+
+class KrdictClient:
+    def __init__(self, api_key: str, cache_path: Path | None = None,
+                 fetch: Callable[[dict, float], str] = _fetch, timeout: float = 10):
+        if not api_key:
+            raise DictError("没有设置词典 Key")
+        self._key, self._fetch, self.timeout = api_key, fetch, timeout
+        self._cache = _Cache(cache_path)
+        self.requests = 0  # 本次实际请求接口的次数（其余来自缓存）
+
+    def covers(self, word: str, meaning_language: str = "中文") -> bool:
+        return detect_language(word) == "ko" and supports(meaning_language)
+
+    def lookup(self, word: str, meaning_language: str = "中文") -> list[Entry]:
+        """查一个词（精确匹配词条），返回所有同形词及其义项；词典里没有时返回空列表。"""
+        word = lookup_key(word)
+        if not word:
+            return []
+        lang_code, lang_name = TRANS_LANGS[meaning_language]
+        key = f"{lang_code}:{word}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        params = {"key": self._key, "q": word, "part": "word", "translated": "y", "trans_lang": lang_code,
+                  "advanced": "y", "method": "exact", "num": 20}
+        # 只要同一个词：「-배」（词缀）、「배-」（词干）这类带连字符的词条不算；「^」是词条里的分写标记
+        plain = lambda w: re.sub(r"[\^\s]", "", w)
+        entries = [e for e in parse_search(self._fetch(params, self.timeout), lang_name)
+                   if plain(e.word) == plain(word)]
+        self.requests += 1
+        self._cache.put(key, entries)
+        return entries
+
+
+def _fetch_url(url: str, timeout: float) -> str:
+    """GET 一个网址；404（词典里没有这个词）返回空字符串。"""
+    request = urllib.request.Request(url, headers={"User-Agent": "CardMaker/1.0 (graduation project)"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return ""
+        raise DictError(f"维基词典出错（HTTP {exc.code}）") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise DictError(f"连不上维基词典：{getattr(exc, 'reason', exc)}") from None
+
+
+class WiktionaryClient:
+    """维基词典：不用 Key，英语、中文、日语、韩语单词都能查；义项释义是英语的。"""
+
+    def __init__(self, cache_path: Path | None = None, fetch: Callable[[str, float], str] = _fetch_url,
+                 timeout: float = 10):
+        self._cache, self._fetch, self.timeout = _Cache(cache_path), fetch, timeout
+        self.requests = 0
+
+    def covers(self, word: str, meaning_language: str = "中文") -> bool:
+        return bool(lookup_key(word))
+
+    def lookup(self, word: str, meaning_language: str = "中文") -> list[Entry]:
+        """释义都是英语的，和释义语言无关，所以缓存只按单词。"""
+        word = lookup_key(word)
+        if not word:
+            return []
+        lang = WIKTIONARY_LANGS[detect_language(word)]
+        key = f"wikt:{lang}:{word}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        entries = self._entries(lang, word)
+        self._cache.put(key, entries)
+        return entries
+
+    def _entries(self, lang: str, word: str, follow: bool = True) -> list[Entry]:
+        path = "/".join(urllib.parse.quote(part) for part in (word[0], word[:2], word))
+        self.requests += 1
+        entries = []
+        for line in self._fetch(WIKTIONARY_URL.format(lang=lang, path=path), self.timeout).splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if item.get("pos") == "soft-redirect":  # 简体字词条只指向繁体字词条（缓解 → 緩解）
+                if follow and item.get("redirects"):
+                    entries += self._entries(lang, item["redirects"][0], follow=False)
+                continue
+            glossed = [s for s in item.get("senses") or [] if s.get("glosses")]
+            if glossed:
+                entries.append(Entry("", item.get("word") or word, 0, item.get("pos") or "",
+                                     [Sense(n, "; ".join(s["glosses"])) for n, s in enumerate(glossed, 1)],
+                                     f"https://en.wiktionary.org/wiki/{urllib.parse.quote(word)}", WIKTIONARY_NAME))
+        return entries
+
+
+class Dictionaries:
+    """按单词的语言选词典：韩语单词有 Key 时查《韩国语基础词典》（有中英日译词，最准），其余都查维基词典。"""
+
+    def __init__(self, krdict: KrdictClient | None = None, wiktionary: WiktionaryClient | None = None):
+        self.krdict, self.wiktionary = krdict, wiktionary
+
+    def _pick(self, word: str, meaning_language: str):
+        if self.krdict and self.krdict.covers(word, meaning_language):
+            return self.krdict
+        return self.wiktionary
+
+    def covers(self, word: str, meaning_language: str = "中文") -> bool:
+        client = self._pick(word, meaning_language)
+        return client is not None and client.covers(word, meaning_language)
+
+    def lookup(self, word: str, meaning_language: str = "中文") -> list[Entry]:
+        return self._pick(word, meaning_language).lookup(word, meaning_language)
+
+
+def make_dictionary(settings) -> Dictionaries | None:
+    """按设置创建词典；关掉时返回 None（不核对，其余功能照常）。没填 Key 时韩语单词也查维基词典。"""
+    conf = settings.dictionary
+    if not conf.enabled:
+        return None
+    return Dictionaries(KrdictClient(conf.krdict_key) if conf.krdict_key else None, WiktionaryClient())

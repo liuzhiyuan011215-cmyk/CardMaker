@@ -57,6 +57,30 @@ def test_pick_best_detects_dropped_characters():
     assert pick_best([("[]", 0.97, "ko"), ("[自]", 0.90, "zh")]) == ("[自]", 0.90, "zh")
 
 
+def test_pick_best_detects_dropped_characters_across_full_and_half_width():
+    # 韩语模型把「（恒大地产集」认成半角的「(」：全角半角视为相同，仍判定为漏字
+    assert pick_best([("(", 0.99, "ko"), ("（恒大地产集", 0.90, "zh")])[2] == "zh"
+
+
+def test_pick_best_uses_chinese_model_for_digits_and_punctuation():
+    # 实测（2026-10-05）：韩语模型置信度更高，却把括号和小数点认错了
+    assert pick_best([("[2024] 56", 0.98, "ko"), ("〔2024〕56号", 0.90, "zh")]) == ("〔2024〕56号", 0.90, "zh")
+    assert pick_best([("1 1 6", 0.95, "ko"), ("1.16", 0.85, "zh")]) == ("1.16", 0.85, "zh")
+    # 中文模型自己也没把握时，不换
+    assert pick_best([("123", 0.95, "ko"), ("l23", 0.30, "zh")])[2] == "ko"
+
+
+def test_pick_best_keeps_korean_model_for_english_words():
+    # 有字母就不算「只有数字标点」：英文仍交给韩语模型（它读英文带空格，更准）
+    assert pick_best([("The committee", 0.97, "ko"), ("Thecommittee", 0.93, "zh")])[2] == "ko"
+
+
 def test_han_runs_groups_consecutive_chinese_segments():
     chosen = [("확산되다", 0.9, "ko"), ("[自]", 0.9, "zh"), ("扩散，", 0.9, "zh"), ("蔓延", 0.9, "zh"), ("word", 0.9, "zh")]
     assert han_runs([0, 1, 2, 3, 4], chosen) == [[0], [1, 2, 3], [4]]
+
+
+def test_han_runs_absorb_digits_and_punctuation():
+    # 「罚没1.16亿元」被切成几段时，数字和小数点要和汉字一起交给中文模型重认
+    chosen = [("罚没", 0.9, "zh"), ("1", 0.9, "zh"), ("16", 0.9, "ko"), ("亿元、", 0.9, "zh"), ("감사", 0.9, "ko")]
+    assert han_runs([0, 1, 2, 3, 4], chosen) == [[0, 1, 2, 3], [4]]

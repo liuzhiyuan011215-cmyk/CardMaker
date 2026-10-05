@@ -40,6 +40,7 @@ user_prompt: |
 output:
   list_key: items
   grounded: [word, book_example]  # 防编造：词条和书上例句必须能在页面中找到
+  dictionary: {word: word, meaning: meaning, sentence: book_example}  # 释义拿词典核对
   fields:
     word: {label: "单词", required: true, description: "词条本身"}
     pos: {label: "词性", description: "词性简写"}

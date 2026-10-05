@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QFileDialog, QHB
 
 from ..config import load_settings
 from ..export.preview import write_outputs
+from ..i18n import tr
+from ..pipeline.meaning_check import CORRECTED, ERROR, LABELS as CHECK_LABELS, NOT_FOUND, UNMATCHED, check_status
 from ..pipeline.postprocess import CLOZE, add_mcq_options
 from ..pipeline.result import Card, RunResult
 from ..storage import TaskStore
@@ -23,6 +25,19 @@ HIDDEN_FIELDS = {"surface", "option_a", "option_b", "option_c", "option_d", "ans
 READ_ONLY_FIELDS = {"kind"}
 KIND_TEXT = {"word": "单词", "phrase": "短语/句型"}
 STATUS_COLORS = {"已导入": "#16a34a", "已存在": "#98a2b3", "失败": "#dc2626"}
+CHECK_COLORS = {CORRECTED: "#b45309", UNMATCHED: "#dc2626", NOT_FOUND: "#b45309", ERROR: "#98a2b3"}
+
+
+def check_tooltip(check: dict) -> str:
+    """「词典」列的悬停说明：词典里的义项、原来的释义、提示。"""
+    lines = []
+    if check.get("sense"):
+        lines.append(f"{check.get('source', '词典')}：{check['sense']}")
+    if check.get("original"):
+        lines.append(f"原来的释义：{check['original']}")
+    if check.get("note"):
+        lines.append(check["note"])
+    return "\n".join(lines)
 WIDE_FIELDS = {"source_sentence", "source_translation", "example", "example_translation", "book_example",
                "book_example_translation", "ai_example", "ai_example_translation"}
 
@@ -41,15 +56,19 @@ class CardTableModel(QAbstractTableModel):
         self.columns = [name for name in template.fields
                         if name not in HIDDEN_FIELDS and any(c.data.get(name) for c in cards)]
         self.show_status = any(c.anki_status for c in cards)
+        self.show_dict = any(check_status(c) for c in cards)
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.cards)
 
     def columnCount(self, parent=QModelIndex()):
-        return 0 if parent.isValid() else len(self.columns) + 1 + int(self.show_status)
+        return 0 if parent.isValid() else len(self.columns) + 1 + int(self.show_dict) + int(self.show_status)
+
+    def is_dict_column(self, column: int) -> bool:
+        return self.show_dict and column == len(self.columns) + 1
 
     def is_status_column(self, column: int) -> bool:
-        return self.show_status and column == len(self.columns) + 1
+        return self.show_status and column == len(self.columns) + 1 + int(self.show_dict)
 
     def refresh_status(self) -> None:
         """导入 Anki 之后调用：显示「Anki」结果列。"""
@@ -66,11 +85,13 @@ class CardTableModel(QAbstractTableModel):
         if orientation == Qt.Orientation.Vertical:
             return section + 1
         if section == 0:
-            return "导入"
+            return tr("导入")
         if self.is_status_column(section):
             return "Anki"
+        if self.is_dict_column(section):
+            return tr("词典")
         name = self.field_at(section)
-        return self.template.fields[name].label or name
+        return tr(self.template.fields[name].label or name)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -80,9 +101,18 @@ class CardTableModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.CheckStateRole:
                 return Qt.CheckState.Checked if card.selected else Qt.CheckState.Unchecked
             return None
+        if self.is_dict_column(index.column()):
+            check = card.context.get("dict_check") or {}
+            if role == Qt.ItemDataRole.DisplayRole:
+                return tr(CHECK_LABELS.get(check.get("status"), ""))
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return tr(check_tooltip(check))
+            if role == Qt.ItemDataRole.ForegroundRole:
+                return QColor(CHECK_COLORS.get(check.get("status"), "#1f2328"))
+            return None
         if self.is_status_column(index.column()):
             if role == Qt.ItemDataRole.DisplayRole:
-                return card.anki_status
+                return tr(card.anki_status)
             if role == Qt.ItemDataRole.ForegroundRole:
                 return QColor(STATUS_COLORS.get(card.anki_status, "#1f2328"))
             return None
@@ -90,7 +120,7 @@ class CardTableModel(QAbstractTableModel):
         raw = card.data.get(name, "")
         value = "；".join(map(str, raw)) if isinstance(raw, list) else str(raw or "")
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
-            return KIND_TEXT.get(value, value) if name == "kind" else value
+            return tr(KIND_TEXT.get(value, value)) if name == "kind" else value
         if role == Qt.ItemDataRole.EditRole:
             return value
         return None
@@ -101,7 +131,8 @@ class CardTableModel(QAbstractTableModel):
         card = self.cards[index.row()]
         if index.column() == 0 and role == Qt.ItemDataRole.CheckStateRole:
             card.selected = Qt.CheckState(value) == Qt.CheckState.Checked
-        elif index.column() > 0 and not self.is_status_column(index.column()) and role == Qt.ItemDataRole.EditRole:
+        elif (index.column() > 0 and not self.is_status_column(index.column())
+              and not self.is_dict_column(index.column()) and role == Qt.ItemDataRole.EditRole):
             name = self.field_at(index.column())
             if self.template.fields[name].type == "list":
                 card.data[name] = [part.strip() for part in str(value).replace(";", "；").split("；") if part.strip()]
@@ -119,7 +150,7 @@ class CardTableModel(QAbstractTableModel):
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if index.column() == 0:
             return flags | Qt.ItemFlag.ItemIsUserCheckable
-        if self.is_status_column(index.column()):
+        if self.is_status_column(index.column()) or self.is_dict_column(index.column()):
             return flags
         if self.field_at(index.column()) not in READ_ONLY_FIELDS:
             flags |= Qt.ItemFlag.ItemIsEditable
@@ -156,7 +187,7 @@ def _sections(f: dict, pairs: list[tuple[str, str]]) -> str:
     html = ""
     for title, key in pairs:
         if f.get(key):
-            html += f"<p style='color:#667085; font-size:13px;'>{title}</p><p style='font-size:16px;'>{f[key]}</p>"
+            html += f"<p style='color:#667085; font-size:13px;'>{tr(title)}</p><p style='font-size:16px;'>{f[key]}</p>"
     if f.get("Source"):
         html += f"<p style='color:#98a2b3; font-size:12px;'>{f['Source']}</p>"
     return html
@@ -165,8 +196,8 @@ def _sections(f: dict, pairs: list[tuple[str, str]]) -> str:
 def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") -> str:
     """卡片预览（Qt 富文本）。字段内容已经过转义，只含 <b>、<pre> 等简单标记。"""
     f = card.fields
-    front_label = "<p style='color:#98a2b3; font-size:12px;'>正面</p>"
-    back_label = "<hr><p style='color:#98a2b3; font-size:12px;'>背面</p>"
+    front_label = f"<p style='color:#98a2b3; font-size:12px;'>{tr('正面')}</p>"
+    back_label = f"<hr><p style='color:#98a2b3; font-size:12px;'>{tr('背面')}</p>"
     if note_type == "cloze":
         return (front_label + f"<p style='font-size:19px;'>{_cloze(f.get('Text', ''), False)}</p>" + back_label
                 + f"<p style='font-size:19px;'>{_cloze(f.get('Text', ''), True)}</p>"
@@ -180,7 +211,7 @@ def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") ->
             return f"<table width='100%' cellpadding='8' cellspacing='4'>{rows}</table>"
         question = f"<p style='font-size:18px; font-weight:600;'>{f.get('Question', '')}</p>"
         return (front_label + question + options(None) + back_label + question + options(f.get("Answer"))
-                + f"<p>正确答案：<b>{f.get('Answer', '')}</b></p>"
+                + f"<p>{tr('正确答案：')}<b>{f.get('Answer', '')}</b></p>"
                 + _sections(f, [("💡 解析", "Explanation"), ("📖 原文", "SourceText")]))
     if "Front" not in f or "Meaning" not in f:  # 其他笔记类型：直接列出所有字段
         rows = "".join(f"<tr><td style='color:#667085'>{k}</td><td>{v}</td></tr>" for k, v in f.items())
@@ -193,7 +224,7 @@ def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") ->
     ]
 
     def section(title: str, body: str, translation: str) -> None:
-        parts.append(f"<p style='color:#667085; font-size:13px;'>{title}</p>")
+        parts.append(f"<p style='color:#667085; font-size:13px;'>{tr(title)}</p>")
         parts.append(f"<p style='font-size:17px;'>{body}</p>")
         if translation:
             parts.append(f"<p style='color:#667085; font-size:15px;'>{translation}</p>")
@@ -203,7 +234,7 @@ def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") ->
     if f.get("Example"):
         section(f.get("ExampleLabel") or "例句", f["Example"], f.get("ExampleTranslation", ""))
     parts.append("<table width='100%' cellpadding='10' bgcolor='#f4f4f4'><tr><td>"
-                 f"<span style='font-weight:600;'>单词意思：</span>{f['Meaning']}</td></tr></table>")
+                 f"<span style='font-weight:600;'>{tr('单词意思：')}</span>{f['Meaning']}</td></tr></table>")
     if f.get("Source"):
         parts.append(f"<p style='color:#98a2b3; font-size:12px;'>{f['Source']}</p>")
     return "".join(parts)
@@ -233,13 +264,13 @@ class ReviewPage(QWidget):
 
         toolbar = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText("🔍 搜索卡片内容…")
+        self.search.setPlaceholderText(tr("🔍 搜索卡片内容…"))
         self.search.setClearButtonEnabled(True)
         self.search.setMaximumWidth(320)
         toolbar.addWidget(self.search)
         for text, slot in (("全选", lambda: self._select_all(True)), ("全不选", lambda: self._select_all(False)),
                            ("删除选中的行", self._delete_rows)):
-            button = QPushButton(text)
+            button = QPushButton(tr(text))
             button.clicked.connect(slot)
             toolbar.addWidget(button)
         toolbar.addStretch()
@@ -267,8 +298,8 @@ class ReviewPage(QWidget):
         direction = QHBoxLayout()
         direction.addWidget(label("卡片预览", "Big"))
         direction.addStretch()
-        self.forward = QRadioButton("外语→释义")
-        self.reverse = QRadioButton("释义→外语")
+        self.forward = QRadioButton(tr("外语→释义"))
+        self.reverse = QRadioButton(tr("释义→外语"))
         self.forward.setChecked(True)
         group = QButtonGroup(self)
         for button in (self.forward, self.reverse):
@@ -288,14 +319,14 @@ class ReviewPage(QWidget):
         layout.addWidget(splitter, 1)
 
         bottom = QHBoxLayout()
-        restart = QPushButton("↺  再做一份")
+        restart = QPushButton(tr("↺  再做一份"))
         restart.clicked.connect(self.restart_requested)
         bottom.addWidget(restart)
         bottom.addStretch()
-        self.export_button = QPushButton("导出文件…")
+        self.export_button = QPushButton(tr("导出文件…"))
         self.export_button.clicked.connect(self._export)
         bottom.addWidget(self.export_button)
-        self.anki_button = QPushButton("导入 Anki")
+        self.anki_button = QPushButton(tr("导入 Anki"))
         self.anki_button.setObjectName("Primary")
         self.anki_button.clicked.connect(self._import_to_anki)
         bottom.addWidget(self.anki_button)
@@ -319,9 +350,9 @@ class ReviewPage(QWidget):
         u = result.usage
         note = "（已取消，下面是取消前生成的卡片）" if result.cancelled else ""
         dropped = "，".join(f"{reason} {n}" for reason, n in result.dropped.items())
-        self.summary.setText(f"《{result.book_title}》 · {result.template_name}{note}\n"
+        self.summary.setText(tr(f"《{result.book_title}》 · {result.template_name}{note}\n"
                              f"共 {len(result.cards)} 张卡片 · 用了 {u.total_tokens:,} 个 token · 耗时 {result.elapsed:.0f} 秒"
-                             + (f" · 已自动过滤：{dropped}" if dropped else ""))
+                             + (f" · 已自动过滤：{dropped}" if dropped else "")))
         self._update_count()
         if result.cards:
             self.table.selectRow(0)
@@ -357,7 +388,7 @@ class ReviewPage(QWidget):
     def _update_count(self) -> None:
         if self.model:
             selected = self.model.selected_count()
-            self.count_label.setText(f"已勾选 {selected} / {len(self.model.cards)} 张")
+            self.count_label.setText(tr(f"已勾选 {selected} / {len(self.model.cards)} 张"))
             self.export_button.setEnabled(selected > 0)
             self.anki_button.setEnabled(selected > 0)
 
@@ -372,7 +403,7 @@ class ReviewPage(QWidget):
             self.model.refresh_status()
             self._resize_columns()
             self.table.selectRow(0)
-            self.summary.setText(f"{self.summary.text()}\nAnki：{dialog.report.summary()}")
+            self.summary.setText(f"{self.summary.text()}\n{tr(f'Anki：{dialog.report.summary()}')}")
 
     def _select_all(self, selected: bool) -> None:
         if self.model:
@@ -383,22 +414,22 @@ class ReviewPage(QWidget):
             return
         rows = {self.proxy.mapToSource(i).row() for i in self.table.selectionModel().selectedRows()}
         if not rows:
-            QMessageBox.information(self, "删除", "先在表格里点选要删除的行（可按住 ⌘ 多选）。")
+            QMessageBox.information(self, tr("删除"), tr("先在表格里点选要删除的行（可按住 ⌘ 多选）。"))
             return
-        answer = QMessageBox.question(self, "删除", f"确定删除选中的 {len(rows)} 张卡片吗？")
+        answer = QMessageBox.question(self, tr("删除"), tr(f"确定删除选中的 {len(rows)} 张卡片吗？"))
         if answer == QMessageBox.StandardButton.Yes:
             self.model.remove_rows(rows)
 
     def _export(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "选择保存位置", str(Path.home() / "Desktop"))
+        folder = QFileDialog.getExistingDirectory(self, tr("选择保存位置"), str(Path.home() / "Desktop"))
         if not folder or not self.result:
             return
         out_dir = write_outputs(dataclasses.replace(self.result, cards=self.selected_cards()), Path(folder))
         box = QMessageBox(self)
-        box.setWindowTitle("已导出")
-        box.setText(f"已保存 {len(self.selected_cards())} 张卡片到：\n{out_dir}")
-        open_button = box.addButton("打开预览网页", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("好", QMessageBox.ButtonRole.RejectRole)
+        box.setWindowTitle(tr("已导出"))
+        box.setText(tr(f"已保存 {len(self.selected_cards())} 张卡片到：\n{out_dir}"))
+        open_button = box.addButton(tr("打开预览网页"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(tr("好"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is open_button:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir / "cards.html")))

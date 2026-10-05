@@ -63,6 +63,10 @@ class RunResult:
         drop_text = "，".join(f"{reason} {n}" for reason, n in self.dropped.items())
         lines.append(f"卡片：{len(self.cards)} 张" + (f"（{kind_text}）" if kind_text else "")
                      + (f"；丢弃：{drop_text}" if drop_text else ""))
+        from .meaning_check import LABELS, summarize  # 放在这里避免循环导入
+        checks = summarize(self.cards)
+        if checks:
+            lines.append("词典核对释义：" + "，".join(f"{LABELS[k]} {n}" for k, n in checks.most_common()))
         levels = Counter(c.data.get("difficulty") for c in self.cards if c.data.get("difficulty"))
         if levels:
             lines.append("难度分布：" + " · ".join(f"{k} {n}" for k, n in sorted(levels.items())))

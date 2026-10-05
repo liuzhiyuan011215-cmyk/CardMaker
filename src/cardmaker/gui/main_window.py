@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
 from ..config import load_settings
+from ..i18n import tr
 from ..pipeline.result import RunResult
 from ..pipeline.runner import load_result
 from ..storage import TaskStore
@@ -25,7 +26,7 @@ STEPS = ["选择用途", "选择资料", "生成卡片", "检查并导入"]
 class MainWindow(QMainWindow):
     def __init__(self, store: TaskStore | None = None):
         super().__init__()
-        self.setWindowTitle("CardMaker · 一键把 PDF 变成 Anki 卡片")
+        self.setWindowTitle(tr("CardMaker · 一键把 PDF 变成 Anki 卡片"))
         self.resize(1200, 820)
         self.setMinimumSize(1000, 700)
         self.store = store or TaskStore()
@@ -50,9 +51,9 @@ class MainWindow(QMainWindow):
         titles.addWidget(label("把 PDF、单词书、读书笔记一键变成 Anki 卡片", "AppSubtitle"))
         top.addLayout(titles)
         top.addStretch()
-        history_button = QPushButton("📜  历史")
+        history_button = QPushButton(tr("📜  历史"))
         history_button.clicked.connect(self.open_history)
-        settings_button = QPushButton("⚙  设置")
+        settings_button = QPushButton(tr("⚙  设置"))
         settings_button.clicked.connect(lambda: self.open_settings())
         for button in (history_button, settings_button):
             top.addWidget(button, alignment=Qt.AlignmentFlag.AlignTop)
@@ -111,7 +112,7 @@ class MainWindow(QMainWindow):
 
     def open_history(self) -> None:
         if self.is_generating():
-            QMessageBox.information(self, "历史记录", "正在生成卡片，完成后再看历史记录吧。")
+            QMessageBox.information(self, tr("历史记录"), tr("正在生成卡片，完成后再看历史记录吧。"))
             return
         dialog = HistoryDialog(self, self.store)
         dialog.open_requested.connect(self.open_task)
@@ -131,11 +132,11 @@ class MainWindow(QMainWindow):
 
     def ensure_api_key(self):
         settings = load_settings()
-        if not settings.llm.api_key:
-            if not self.open_settings("第一次使用，请先粘贴大模型的 API Key。"):
+        if not settings.llm.ready:
+            if not self.open_settings("第一次使用，请先粘贴大模型的 API Key（或者选「本地模型」）。"):
                 return None
             settings = load_settings()
-        return settings if settings.llm.api_key else None
+        return settings if settings.llm.ready else None
 
     def start_generation(self) -> None:
         settings = self.ensure_api_key()
@@ -175,7 +176,7 @@ class MainWindow(QMainWindow):
             reason = ("已取消。任务已保存，可以在第一步点「继续生成」接着做。" if result.cancelled else
                       f"所有页面都失败了：{failed[0]}" if failed else
                       "没有找到合适的内容。可以换个用途，或者调整选项（例如把水平调低一点）再试。")
-            QMessageBox.information(self, "没有生成卡片", reason)
+            QMessageBox.information(self, tr("没有生成卡片"), tr(reason))
             self.refresh_resume_banner()
             self.go(0 if result.cancelled else 1)
             return
@@ -188,7 +189,7 @@ class MainWindow(QMainWindow):
     def on_failed(self, message: str) -> None:
         self.progress_page.stop()
         self.worker = None
-        QMessageBox.warning(self, "生成失败", f"{message}\n\n已经完成的页都保存好了，解决问题后可以在第一步点「继续生成」。")
+        QMessageBox.warning(self, tr("生成失败"), tr(f"{message}\n\n已经完成的页都保存好了，解决问题后可以在第一步点「继续生成」。"))
         self.refresh_resume_banner()
         self.go(0)
         if "Key" in message:
@@ -196,7 +197,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self.is_generating():
-            answer = QMessageBox.question(self, "正在生成", "卡片还在生成中，确定要退出吗？\n已经完成的页都保存好了，下次打开可以继续。")
+            answer = QMessageBox.question(self, tr("正在生成"), tr("卡片还在生成中，确定要退出吗？\n已经完成的页都保存好了，下次打开可以继续。"))
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return

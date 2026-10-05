@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QPushButton, QTableWidget,
                                QTableWidgetItem, QVBoxLayout)
 
+from ..i18n import tr
 from ..storage import TaskInfo, TaskStore, status_text
 from ..templates.loader import list_templates
 from .widgets import label
@@ -18,7 +19,7 @@ class HistoryDialog(QDialog):
 
     def __init__(self, parent=None, store: TaskStore | None = None):
         super().__init__(parent)
-        self.setWindowTitle("历史记录")
+        self.setWindowTitle(tr("历史记录"))
         self.resize(920, 520)
         self.store = store or TaskStore()
         self.tasks: list[TaskInfo] = self.store.list_tasks()
@@ -30,7 +31,7 @@ class HistoryDialog(QDialog):
         layout.addWidget(label("每一页处理完都会自动保存。没做完的任务可以继续，已经完成的页不会重复花 token。", "Hint"))
 
         self.table = QTableWidget(len(self.tasks), len(COLUMNS))
-        self.table.setHorizontalHeaderLabels(COLUMNS)
+        self.table.setHorizontalHeaderLabels([tr(c) for c in COLUMNS])
         self.table.verticalHeader().hide()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -40,7 +41,7 @@ class HistoryDialog(QDialog):
                       f"{task.chunks_ok}/{task.chunks_total} 页", str(task.cards), f"{task.total_tokens:,}",
                       status_text(task)]
             for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                item = QTableWidgetItem(tr(value))
                 if col in (3, 4, 5):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, col, item)
@@ -55,12 +56,12 @@ class HistoryDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch()
-        self.open_button = QPushButton("查看卡片")
+        self.open_button = QPushButton(tr("查看卡片"))
         self.open_button.clicked.connect(self._open)
-        self.resume_button = QPushButton("继续生成")
+        self.resume_button = QPushButton(tr("继续生成"))
         self.resume_button.setObjectName("Primary")
         self.resume_button.clicked.connect(self._resume)
-        close = QPushButton("关闭")
+        close = QPushButton(tr("关闭"))
         close.clicked.connect(self.reject)
         for button in (close, self.open_button, self.resume_button):
             buttons.addWidget(button)

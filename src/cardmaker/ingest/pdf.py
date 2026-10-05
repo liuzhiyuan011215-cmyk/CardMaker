@@ -1,4 +1,4 @@
-"""PDF → 每页文字。优先用文字层（快、准、免费）；没有文字层或文字层是乱码时才走 OCR。"""
+"""PDF → 每页文字。优先用文字层（快、准、免费）；没有文字层或文字层是乱码时才走 OCR。输出按段落整理（layout.py）。"""
 from __future__ import annotations
 
 import logging
@@ -12,7 +12,8 @@ import numpy as np
 import pymupdf
 
 from ..progress import EXTRACT, ProgressEvent, ProgressFn, check_cancel
-from .ocr import OcrEngine, create_ocr_engine, lines_to_text
+from .layout import ocr_text, page_text
+from .ocr import OcrEngine, create_ocr_engine
 
 log = logging.getLogger(__name__)
 
@@ -129,12 +130,14 @@ def extract_pdf(path: Path, pages: list[int] | None = None, ocr_mode: str = "aut
                     say(ProgressEvent(EXTRACT, n - 1, len(wanted), "正在加载文字识别模型（首次使用会自动下载，约 30MB）…"))
                     ocr_engine = create_ocr_engine(ocr_langs)
                 say(ProgressEvent(EXTRACT, n - 1, len(wanted), f"第 {label} 页是扫描页，正在识别文字…"))
-                text = lines_to_text(ocr_engine.recognize(render_page(page, dpi)))
+                image = render_page(page, dpi)
+                text = ocr_text(ocr_engine.recognize(image), image.shape[1])
                 method = METHOD_OCR
                 if quality == "garbled":
                     log.info("第 %d 页文字层是乱码，已改用 OCR", page_no)
             else:
                 method = METHOD_TEXT
+                text = page_text(page)  # 一行一行 → 一段一段（只改空白，不改字）
 
             result.pages.append(PageText(index=page_no - 1, label=label, text=text.strip(),
                                          method=method, chapter=chapter_of(page_no)))

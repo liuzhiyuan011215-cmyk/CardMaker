@@ -7,9 +7,10 @@
 流程（每页）：
 1. 检测模型找出文字行，按阅读顺序排好（支持双栏）；
 2. 每行先整行交给各语言模型识别。中文模型很有把握、其他模型明显不行 → 纯中文行，直接采用；
-3. 其余行按列投影找空白切成小段（韩语、英语按词切开），每段取置信度最高的模型结果；
-4. 连续的汉字段合并成一段，用中文模型再整体识别一次——汉字之间没有空格，
-   按空白切容易把「行」「川」这类左右结构的字切碎；
+3. 其余行按列投影找空白切成小段（韩语、英语按词切开），每段取置信度最高的模型结果
+   （只有数字、标点的段和漏字的结果除外，见 pick_best）；
+4. 连续的汉字段（连同夹在中间的数字、标点段）合并成一段，用中文模型再整体识别一次——
+   汉字之间没有空格，按空白切容易把「行」「川」这类左右结构的字切碎，也会切碎「1.16」；
 5. 拼回整行：韩语、英语词之间保留空格，汉字之间不加空格。
 
 注意：RapidOCR 默认的文字方向分类器会把韩语行误判为倒置并翻转，导致韩语几乎全错，
@@ -285,19 +286,31 @@ def is_subsequence(short: str, long: str) -> bool:
 def pick_best(candidates: list[tuple[str, float, str]]) -> tuple[str, float, str]:
     """在各语言模型的结果中选一个。
 
-    一般取置信度最高的；但模型遇到不认识的文字会直接跳过，置信度照样很高——
-    例如韩语模型把「[自]」认成「[]」。所以：如果最高分的结果里没有它本语言的文字，
-    而另一个结果有、并且前者只是后者的子序列，就说明前者漏认了，改用后者。
+    一般取置信度最高的，但有两种例外：
+    1. 模型遇到不认识的文字会直接跳过，置信度照样很高——例如韩语模型把「[自]」认成「[]」、
+       把「（恒大」认成「(」。如果最高分的结果里没有它本语言的文字，而另一个结果有、
+       并且前者只是后者的子序列（全角半角视为相同），就说明前者漏认了，改用后者。
+    2. 结果里只有数字和标点（一个字母、汉字、韩文都没有）时，改用中文模型：它的符号最全，
+       韩语模型会把「〔2024〕」认成「[2024]」、把「1.16」认成「1 1 6」，数字错了最要命。
     """
     best = max(candidates, key=lambda c: c[1])
-    squeeze = lambda t: "".join(t.split())
+    squeeze = lambda t: unicodedata.normalize("NFKC", "".join(t.split()))
     for cand in candidates:
         if cand is best or cand[1] < 0.5:
             continue
         if (own_script_count(best[0], best[2]) == 0 and own_script_count(cand[0], cand[2]) > 0
                 and is_subsequence(squeeze(best[0]), squeeze(cand[0]))):
             best = cand
+    if best[2] != "zh" and not has_letters(best[0]):
+        zh = next((c for c in candidates if c[2] == "zh" and c[0].strip() and c[1] >= 0.5), None)
+        if zh is not None:
+            best = zh
     return best
+
+
+def has_letters(text: str) -> bool:
+    """有没有文字（汉字、韩文、字母都算）；只有数字、标点、符号时为 False。"""
+    return any(ch.isalpha() for ch in text)
 
 
 def is_han(ch: str) -> bool:
@@ -308,17 +321,22 @@ def has_han(text: str) -> bool:
     return any(unicodedata.name(ch, "").startswith("CJK UNIFIED") for ch in text)
 
 
+def joins_han_run(segment: tuple[str, float, str]) -> bool:
+    text, _, lang = segment
+    return (lang == "zh" and has_han(text)) or (bool(text.strip()) and not has_letters(text))
+
+
 def han_runs(ks: list[int], chosen: list[tuple[str, float, str]]) -> list[list[int]]:
-    """把一行中的段分组：连续的「中文模型胜出且含汉字」的段归为一组，其余各自一组。"""
+    """把一行中的段分组：连续的「中文模型胜出且含汉字」或「只有数字、标点」的段归为一组，其余各自一组。
+
+    数字、标点也并进来，好让中文模型连着上下文整体再认一次：单独切出来的「1.16」「〔2024〕」
+    最容易认错（小数点、括号太窄，切段时会被切碎）。
+    """
     runs: list[list[int]] = []
     for k in ks:
-        text, _, lang = chosen[k]
-        is_han_seg = lang == "zh" and has_han(text)
-        if is_han_seg and runs and runs[-1][-1] == k - 1:
-            prev_text, _, prev_lang = chosen[runs[-1][-1]]
-            if prev_lang == "zh" and has_han(prev_text):
-                runs[-1].append(k)
-                continue
+        if joins_han_run(chosen[k]) and runs and runs[-1][-1] == k - 1 and joins_han_run(chosen[runs[-1][-1]]):
+            runs[-1].append(k)
+            continue
         runs.append([k])
     return runs
 

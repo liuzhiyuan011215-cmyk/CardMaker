@@ -4,6 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
+from ..i18n import tr
 from ..storage import TaskInfo
 from ..templates.loader import TemplateGroup, list_groups
 from .widgets import Tile, label
@@ -13,7 +14,7 @@ CARD_KINDS = {"vocab": "单词卡（外语→释义 / 释义→外语）", "cloz
 
 def kinds_text(group: TemplateGroup) -> str:
     kinds = list(dict.fromkeys(CARD_KINDS[v.note_type] for v in group.variants))
-    return "可做：" + " · ".join(kinds)
+    return tr("可做：") + " · ".join(tr(kind) for kind in kinds)
 
 
 class PurposePage(QWidget):
@@ -42,11 +43,11 @@ class PurposePage(QWidget):
         resume_row.setContentsMargins(18, 10, 18, 10)
         self.resume_text = label("", "", wrap=True)
         resume_row.addWidget(self.resume_text, 1)
-        ignore = QPushButton("忽略")
+        ignore = QPushButton(tr("忽略"))
         ignore.setObjectName("Link")
         ignore.clicked.connect(self.resume_panel.hide)
         resume_row.addWidget(ignore)
-        resume_button = QPushButton("继续生成")
+        resume_button = QPushButton(tr("继续生成"))
         resume_button.setObjectName("Primary")
         resume_button.clicked.connect(self._resume)
         resume_row.addWidget(resume_button)
@@ -59,13 +60,13 @@ class PurposePage(QWidget):
         layout.addStretch()
 
         bottom = QHBoxLayout()
-        edit = QPushButton("查看 / 编辑模板…")
+        edit = QPushButton(tr("查看 / 编辑模板…"))
         edit.setObjectName("Link")
-        edit.setToolTip("每种用途的提示词、输出格式、卡片字段都在模板文件里，可以查看和修改")
+        edit.setToolTip(tr("每种用途的提示词、输出格式、卡片字段都在模板文件里，可以查看和修改"))
         edit.clicked.connect(self.edit_template_requested)
         bottom.addWidget(edit)
         bottom.addStretch()
-        self.next_button = QPushButton("下一步  →")
+        self.next_button = QPushButton(tr("下一步  →"))
         self.next_button.setObjectName("Primary")
         self.next_button.setEnabled(False)
         self.next_button.clicked.connect(self.next_requested)
@@ -104,8 +105,8 @@ class PurposePage(QWidget):
             self.resume_panel.hide()
             return
         self.resume_text.setText(
-            f"⏸  上次的任务还没做完：《{task.book_title}》已完成 {task.chunks_ok}/{task.chunks_total} 页，"
-            f"已生成 {task.cards} 张卡片。点「继续生成」从中断的地方接着做，已完成的页不会重复花 token。")
+            tr(f"⏸  上次的任务还没做完：《{task.book_title}》已完成 {task.chunks_ok}/{task.chunks_total} 页，"
+            f"已生成 {task.cards} 张卡片。点「继续生成」从中断的地方接着做，已完成的页不会重复花 token。"))
         self.resume_panel.show()
 
     def _resume(self) -> None:

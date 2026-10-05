@@ -28,6 +28,12 @@ LLM_PRESETS: dict[str, dict] = {
         "model": "deepseek-chat",
         "extra_body": {},
     },
+    # 本地模型：装好 Ollama（ollama.com）、下载模型就能用，不用注册、不要 Key、不花钱（见 llm/client.py 的 OllamaClient）
+    "ollama": {
+        "base_url": "http://localhost:11434",
+        "model": "qwen3.5:2b",  # 8 GB 内存的 Mac 也带得动；4b 会卡死
+        "extra_body": {},
+    },
 }
 
 
@@ -44,6 +50,11 @@ class LLMSettings(BaseModel):
     price_input_per_m: float = 0.0
     price_output_per_m: float = 0.0
 
+    @property
+    def ready(self) -> bool:
+        """填了 Key，或者用的是不要 Key 的本地模型。"""
+        return bool(self.api_key) or self.provider == "ollama"
+
     def apply_preset(self, name: str) -> None:
         preset = LLM_PRESETS[name]
         self.provider = name
@@ -58,8 +69,9 @@ class OcrSettings(BaseModel):
 
 
 class TTSSettings(BaseModel):
-    """发音（语音合成），默认用百炼的 qwen-audio-3.1-tts-flash。"""
+    """发音（语音合成），默认用百炼的 qwen-audio-3.1-tts-flash；也可以用系统自带语音（免费）。"""
     enabled: bool = True
+    engine: str = "dashscope"  # dashscope：百炼（音质好）；qwen_local：本地 Qwen3-TTS；system：系统自带语音
     model: str = "qwen-audio-3.1-tts-flash"
     api_key: str = ""  # 留空则用大模型的 Key（都是百炼时同一个 Key）
     # 按文字语言选音色：多语种音色能读韩语和中文；英语用英语音色
@@ -68,15 +80,23 @@ class TTSSettings(BaseModel):
     format: str = "mp3"
 
 
+class DictionarySettings(BaseModel):
+    """用词典核对单词释义：韩语单词查《韩国语基础词典》（Key 免费申请：krdict.korean.go.kr → 오픈 API），
+    英语、中文单词（以及没填 Key 时的韩语单词）查维基词典，不用 Key。"""
+    enabled: bool = True
+    krdict_key: str = ""
+
+
 class Settings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     ocr: OcrSettings = Field(default_factory=OcrSettings)
     tts: TTSSettings = Field(default_factory=TTSSettings)
+    dictionary: DictionarySettings = Field(default_factory=DictionarySettings)
     meaning_language: str = "中文"
     concurrency: int = 5
     anki_url: str = "http://127.0.0.1:8765"
     default_deck: str = "CardMaker"
-    ui_language: str = "zh"
+    ui_language: str = ""  # 界面语言 zh / ko；空 = 跟随系统
 
 
 def app_home() -> Path:

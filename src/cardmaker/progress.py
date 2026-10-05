@@ -5,12 +5,12 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
-EXTRACT, GENERATE = "extract", "generate"
+EXTRACT, GENERATE, CHECK = "extract", "generate", "check"  # CHECK：用词典核对释义
 
 
 @dataclass
 class ProgressEvent:
-    stage: str  # extract：提取文字（含 OCR）；generate：生成卡片
+    stage: str  # extract：提取文字（含 OCR）；generate：生成卡片；check：用词典核对释义
     done: int  # 本阶段已完成的页（块）数
     total: int  # 本阶段总页（块）数
     message: str

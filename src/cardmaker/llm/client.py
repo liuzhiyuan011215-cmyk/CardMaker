@@ -1,10 +1,12 @@
-"""OpenAI 兼容接口的大模型客户端（百炼、DeepSeek 等只要改 base_url 和模型名）。"""
+"""大模型客户端：OpenAI 兼容接口（百炼、DeepSeek 等只要改 base_url 和模型名），本地模型走 Ollama。"""
 from __future__ import annotations
 
 import json
 import logging
 import re
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -101,9 +103,49 @@ class LLMClient:
         return content, usage
 
 
+class OllamaClient:
+    """本地模型（Ollama）。用它的原生接口：OpenAI 兼容接口改不了上下文长度（固定 4096 token，长一点的页会被截断）。"""
+    local = True  # 小模型：词典核对时不让它选义项、改释义（实测 2b 会把对的改错）
+
+    def __init__(self, base_url: str, model: str, *, json_mode: bool = True, temperature: float = 0.3,
+                 timeout: float = 600, num_ctx: int = 8192):
+        self.url = base_url.rstrip("/").removesuffix("/v1") + "/api/chat"
+        self.model, self.json_mode, self.temperature = model, json_mode, temperature
+        self.timeout, self.num_ctx = timeout, num_ctx  # ponytail: 固定 8k 上下文，够一页 5000 字加提示词和输出
+
+    def chat(self, messages: list[dict]) -> tuple[str, Usage]:
+        body = {"model": self.model, "messages": messages, "stream": False, "think": False,  # 不思考，小模型也快
+                "keep_alive": "30s",  # 生成完 30 秒就退出内存，把内存让给发音和别的程序
+                "options": {"temperature": self.temperature, "num_ctx": self.num_ctx}}
+        if self.json_mode:
+            body["format"] = "json"
+        request = urllib.request.Request(self.url, json.dumps(body).encode("utf-8"),
+                                         {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                data = json.load(response)
+        except urllib.error.HTTPError as exc:  # 模型没下载、内存不够等，重试也没用
+            if exc.code == 404:
+                raise FatalLLMError(f"这台电脑上还没有模型 {self.model}，请先在 Ollama 里下载。") from exc
+            detail = exc.read().decode("utf-8", "replace")[:200]
+            raise FatalLLMError(f"本地模型出错（HTTP {exc.code}）：{detail}") from exc
+        except urllib.error.URLError as exc:
+            raise FatalLLMError("连不上本地模型，请先打开 Ollama。") from exc
+        usage = Usage(data.get("prompt_eval_count") or 0, data.get("eval_count") or 0, calls=1)
+        return (data.get("message") or {}).get("content") or "", usage
+
+
+def make_llm(settings: LLMSettings) -> ChatModel:
+    """按设置创建客户端：本地模型走 Ollama，其余走 OpenAI 兼容接口。"""
+    if settings.provider == "ollama":  # 本地生成慢，超时放宽到至少 10 分钟
+        return OllamaClient(settings.base_url, settings.model, json_mode=settings.json_mode,
+                            temperature=settings.temperature, timeout=max(settings.timeout, 600))
+    return LLMClient.from_settings(settings)
+
+
 def check_connection(settings: LLMSettings) -> str:
     """发一条极短的请求，确认 Key、地址、模型名、JSON 模式都可用（约几十个 token）。失败时抛异常。"""
-    client = LLMClient.from_settings(settings.model_copy(update={"timeout": min(settings.timeout, 30)}))
+    client = make_llm(settings.model_copy(update={"timeout": min(settings.timeout, 30)}))
     start = time.monotonic()
     content, usage = client.chat([{"role": "system", "content": "你只输出 json。"},
                                   {"role": "user", "content": '请原样输出：{"ok": true}'}])

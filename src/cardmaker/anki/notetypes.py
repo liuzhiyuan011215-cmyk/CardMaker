@@ -10,7 +10,10 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 from dataclasses import dataclass
+
+from ..i18n import tr
 
 VOCAB_FIELDS = ["Front", "Meaning", "SourceSentence", "SourceTranslation", "Example", "ExampleTranslation",
                 "ExampleLabel", "Audio", "ExampleAudio", "Source", "CardForward", "CardReverse"]
@@ -188,3 +191,11 @@ MCQ = NoteType(
 )
 
 NOTE_TYPES = {"vocab": VOCAB, "cloze": CLOZE, "mcq": MCQ}  # 模板 YAML 里的 note_type → 笔记类型定义
+CARD_LABELS = ["📖 原文", "写出对应的单词", "💡 要点", "💡 解析", "正确答案："]  # 卡片模板里写死的中文标签
+
+
+def localized(note_type: NoteType) -> NoteType:
+    """按界面语言换掉卡片上的标签和笔记类型名。韩语的名字不同，Anki 里原来的中文笔记类型不受影响。"""
+    swap = lambda html: functools.reduce(lambda text, label: text.replace(label, tr(label)), CARD_LABELS, html)
+    return dataclasses.replace(note_type, name=tr(note_type.name), templates=[
+        CardTemplate(tr(t.name), swap(t.front), swap(t.back)) for t in note_type.templates])

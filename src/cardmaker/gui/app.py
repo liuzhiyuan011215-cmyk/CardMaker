@@ -4,10 +4,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from ..config import load_settings
+from ..i18n import set_language
 from ..log import setup_logging
 from .main_window import MainWindow
 from .style import STYLESHEET
@@ -34,6 +36,9 @@ def create_app(argv: list[str] | None = None) -> QApplication:
 def main() -> int:
     setup_logging()
     app = create_app()
+    # 界面语言：设置里选的；没选过就跟随系统（韩语系统显示韩语）
+    system = "ko" if QLocale.system().language() == QLocale.Language.Korean else "zh"
+    set_language(load_settings().ui_language or system)
     window = MainWindow()
     window.show()
     window.raise_()

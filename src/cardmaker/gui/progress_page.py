@@ -6,7 +6,8 @@ import time
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QListWidget, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
-from ..progress import EXTRACT, ProgressEvent
+from ..i18n import tr
+from ..progress import CHECK, EXTRACT, ProgressEvent
 from .widgets import label
 
 EXTRACT_SHARE = 15  # 进度条里「提取文字」阶段占的百分比，其余给「生成卡片」
@@ -49,7 +50,7 @@ class ProgressPage(QWidget):
 
         bottom = QHBoxLayout()
         bottom.addStretch()
-        self.cancel_button = QPushButton("取消")
+        self.cancel_button = QPushButton(tr("取消"))
         self.cancel_button.clicked.connect(self._cancel)
         bottom.addWidget(self.cancel_button)
         layout.addLayout(bottom)
@@ -64,10 +65,10 @@ class ProgressPage(QWidget):
     def start(self) -> None:
         self.log.clear()
         self.bar.setValue(0)
-        self.stage.setText("① 正在读取文件…")
+        self.stage.setText(tr("① 正在读取文件…"))
         self.cards_label.setText("")
         self.cancel_button.setEnabled(True)
-        self.cancel_button.setText("取消")
+        self.cancel_button.setText(tr("取消"))
         self._start = time.monotonic()
         self._gen_start = 0.0
         self._gen_done = self._gen_total = 0
@@ -80,24 +81,26 @@ class ProgressPage(QWidget):
     def on_progress(self, event: ProgressEvent) -> None:
         total = max(event.total, 1)
         if event.stage == EXTRACT:
-            self.stage.setText(f"① 读取文字：{event.done}/{event.total} 页")
+            self.stage.setText(tr(f"① 读取文字：{event.done}/{event.total} 页"))
             self.bar.setValue(int(EXTRACT_SHARE * event.done / total))
+        elif event.stage == CHECK:  # 卡片已经生成完了，进度条和卡片数不动
+            self.stage.setText(tr(f"③ 用词典核对释义：{event.done}/{event.total}"))
         else:
             if not self._gen_start:
                 self._gen_start = time.monotonic()
             self._gen_done, self._gen_total = event.done, event.total
-            self.stage.setText(f"② 生成卡片：{event.done}/{event.total} 页")
+            self.stage.setText(tr(f"② 生成卡片：{event.done}/{event.total} 页"))
             self.bar.setValue(EXTRACT_SHARE + int((100 - EXTRACT_SHARE) * event.done / total))
-            self.cards_label.setText(f"已生成 {event.cards} 张卡片")
-        self.log.addItem(event.message)
+            self.cards_label.setText(tr(f"已生成 {event.cards} 张卡片"))
+        self.log.addItem(tr(event.message))
         self.log.scrollToBottom()
         self._tick()
 
     # ------------------------------------------------------------------
     def _cancel(self) -> None:
         self.cancel_button.setEnabled(False)
-        self.cancel_button.setText("正在取消…")
-        self.log.addItem("正在取消：等当前这一页处理完就停止，已经生成的卡片会保留。")
+        self.cancel_button.setText(tr("正在取消…"))
+        self.log.addItem(tr("正在取消：等当前这一页处理完就停止，已经生成的卡片会保留。"))
         self.cancel_requested.emit()
 
     def _tick(self) -> None:
@@ -106,4 +109,4 @@ class ProgressPage(QWidget):
         if self._gen_done and self._gen_total > self._gen_done:
             per_page = (time.monotonic() - self._gen_start) / self._gen_done
             text += f"  ·  预计还需 {format_seconds(per_page * (self._gen_total - self._gen_done))}"
-        self.time_label.setText(text)
+        self.time_label.setText(tr(text))

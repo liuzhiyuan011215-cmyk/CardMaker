@@ -24,6 +24,7 @@ from ..storage import (CANCELLED, DONE, FAILED, INCOMPLETE, OK, PENDING, RUNNING
                        TaskStore)
 from ..templates.loader import OutputError, Template, load_template
 from .chunking import Chunk, make_chunks
+from .meaning_check import check_meanings
 from .postprocess import add_mcq_options, check_grounding, dedup_key
 from .result import Card, ChunkOutcome, RunResult
 
@@ -175,8 +176,12 @@ def prepare_task(store: TaskStore, input_path: Path, template: Template, params:
 
 
 def process_task(store: TaskStore, task_id: int, template: Template, llm: ChatModel,
-                 progress: ProgressFn | None = None, cancel: threading.Event | None = None) -> RunResult:
-    """处理任务里所有「未完成」或「失败」的页（第一次运行和断点续传都用它）。"""
+                 progress: ProgressFn | None = None, cancel: threading.Event | None = None,
+                 dictionary=None) -> RunResult:
+    """处理任务里所有「未完成」或「失败」的页（第一次运行和断点续传都用它）。
+
+    dictionary：词典（dictionary.KrdictClient），给了就在出卡后用它核对韩语单词的释义。
+    """
     say = progress or (lambda event: None)
     task = store.get_task(task_id)
     options = GenerateOptions.from_dict(task.options)
@@ -249,6 +254,9 @@ def process_task(store: TaskStore, task_id: int, template: Template, llm: ChatMo
                 rec.status, rec.chunk.skip_reason = SKIPPED, "已达到最大卡片数"
                 store.save_chunk(task_id, rec)
     cards, dropped, stopped_early = build_cards(template, task.book_title, records, options.max_cards)
+    if dictionary is not None and cards and stop not in ("cancel", "fatal"):
+        check_meanings(cards, template, dictionary, llm, task.params.get("meaning_language", "中文"),
+                       say, cancel)
     store.save_cards(task_id, cards)
     unfinished = any(r.status in (PENDING, FAILED) for r in records)
     status = CANCELLED if stop == "cancel" else INCOMPLETE if unfinished else DONE
@@ -261,7 +269,8 @@ def process_task(store: TaskStore, task_id: int, template: Template, llm: ChatMo
 
 def run_generation(input_path: Path, template: Template, params: dict, llm: ChatModel,
                    options: GenerateOptions | None = None, progress: ProgressFn | None = None,
-                   cancel: threading.Event | None = None, store: TaskStore | None = None) -> RunResult:
+                   cancel: threading.Event | None = None, store: TaskStore | None = None,
+                   dictionary=None) -> RunResult:
     """新建任务并处理。用户取消时返回已经生成的部分（result.cancelled 为 True），之后可以续传。"""
     options = options or GenerateOptions()
     store = store or TaskStore()
@@ -270,14 +279,14 @@ def run_generation(input_path: Path, template: Template, params: dict, llm: Chat
     except Cancelled:  # 还在读取文字时就取消了，没有可续传的内容
         return RunResult(input_path, template.id, template.name, template.resolve_params(params),
                          options.book_title or input_path.stem, cancelled=True)
-    return process_task(store, task_id, template, llm, progress, cancel)
+    return process_task(store, task_id, template, llm, progress, cancel, dictionary)
 
 
 def resume_task(store: TaskStore, task_id: int, llm: ChatModel, progress: ProgressFn | None = None,
-                cancel: threading.Event | None = None) -> RunResult:
+                cancel: threading.Event | None = None, dictionary=None) -> RunResult:
     """断点续传：已经完成的页直接用保存的结果，只处理没完成和失败的页。"""
     task = store.get_task(task_id)
-    return process_task(store, task_id, load_template(task.template_id), llm, progress, cancel)
+    return process_task(store, task_id, load_template(task.template_id), llm, progress, cancel, dictionary)
 
 
 def load_result(store: TaskStore, task_id: int) -> tuple[RunResult, Template]:

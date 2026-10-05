@@ -51,12 +51,21 @@ class FieldSpec(BaseModel):
     when: str | None = None  # 只有这个参数为真时才要求模型输出该字段（省 token）
 
 
+class DictionarySpec(BaseModel):
+    """单词卡用词典核对释义（pipeline/meaning_check.py）：分别是单词、释义、原句、类型字段。"""
+    word: str = "word"
+    meaning: str = "meaning"
+    sentence: str = ""  # 判断多义词用的是哪个义项时要看原句
+    kind: str = ""  # 值为 phrase 的条目（短语、句型）不核对
+
+
 class OutputSpec(BaseModel):
     list_key: str = "items"
     fields: dict[str, FieldSpec]
     grounded: list[str] = Field(default_factory=list)  # 这些字段的内容必须能在原文中找到
     cloze_grounded: list[str] = Field(default_factory=list)  # 这些字段里 {{c1::答案}} 的答案必须能在原文中找到
     mcq: bool = False  # 选择题：程序把正确答案和干扰项打乱，生成 option_a…option_d 和 answer
+    dictionary: DictionarySpec | None = None  # 韩语单词卡：用词典核对释义
 
 
 class TemplateSpec(BaseModel):

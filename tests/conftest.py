@@ -1,3 +1,6 @@
+import urllib.error
+import urllib.request
+
 import pymupdf
 import pytest
 
@@ -10,6 +13,15 @@ def isolated_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("CARDMAKER_HOME", str(home))
     return home
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """单元测试一律不联网（词典、大模型、语音都用假的）；需要的测试自己再换成假的 urlopen。"""
+    def blocked(*args, **kwargs):
+        raise urllib.error.URLError("单元测试不联网")
+
+    monkeypatch.setattr(urllib.request, "urlopen", blocked)
 
 
 class FakeLLM:

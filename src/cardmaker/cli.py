@@ -83,7 +83,7 @@ def cmd_config(args) -> int:
 def check_connection_cmd(settings) -> int:
     from .llm.client import check_connection, explain_error
 
-    if not settings.llm.api_key:
+    if not settings.llm.ready:
         print("还没有设置 API Key，请先运行：cardmaker config set-key")
         return 1
     try:
@@ -144,16 +144,19 @@ def cmd_tasks(args) -> int:
 
 def cmd_resume(args) -> int:
     from .config import load_settings
-    from .llm.client import LLMClient
+    from .llm.client import make_llm
     from .pipeline.runner import resume_task
     from .storage import TaskStore
 
     settings = load_settings()
-    if not settings.llm.api_key:
+    if not settings.llm.ready:
         print("还没有设置 API Key，请先运行：cardmaker config set-key")
         return 1
-    result = resume_task(TaskStore(), args.task_id, LLMClient.from_settings(settings.llm),
-                         progress=lambda event: print(event.message, file=sys.stderr))
+    from .dictionary import make_dictionary
+
+    result = resume_task(TaskStore(), args.task_id, make_llm(settings.llm),
+                         progress=lambda event: print(event.message, file=sys.stderr),
+                         dictionary=make_dictionary(settings))
     return finish_run(result, args)
 
 
@@ -161,12 +164,12 @@ def cmd_resume(args) -> int:
 def cmd_generate(args) -> int:
     from .config import load_settings, mask_key
     from .export.preview import write_outputs
-    from .llm.client import LLMClient
+    from .llm.client import make_llm
     from .pipeline.runner import GenerateOptions, run_generation
     from .templates.loader import load_template
 
     settings = load_settings()
-    if not settings.llm.api_key:
+    if not settings.llm.ready:
         print("还没有设置 API Key，请先运行：cardmaker config set-key")
         return 1
 
@@ -180,12 +183,15 @@ def cmd_generate(args) -> int:
                               ocr_mode=args.ocr, ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi,
                               book_title=args.title, concurrency=args.concurrency or settings.concurrency,
                               source=template.source, notes_book=args.book)
-    llm = LLMClient.from_settings(settings.llm)
+    llm = make_llm(settings.llm)
     print(f"模型：{settings.llm.model}（{settings.llm.base_url}，Key {mask_key(settings.llm.api_key)}）",
           file=sys.stderr)
 
+    from .dictionary import make_dictionary
+
     result = run_generation(Path(args.input), template, params, llm, options,
-                            progress=lambda event: print(event.message, file=sys.stderr))
+                            progress=lambda event: print(event.message, file=sys.stderr),
+                            dictionary=make_dictionary(settings))
     return finish_run(result, args)
 
 

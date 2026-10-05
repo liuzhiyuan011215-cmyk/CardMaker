@@ -13,8 +13,9 @@ params:
     label: 学习者水平
     default: TOPIK 4级
     choices: ["TOPIK 2级", "TOPIK 3级", "TOPIK 4级", "TOPIK 5级", "TOPIK 6级",
-              "雅思 5分", "雅思 6分", "雅思 7分", "CEFR B1", "CEFR B2", "CEFR C1"]
-    description: 如 TOPIK 4级、雅思 6分、CEFR B2。只挑超出这个水平的词，数量由文本自己决定。
+              "雅思 5分", "雅思 6分", "雅思 7分", "CEFR B1", "CEFR B2", "CEFR C1",
+              "HSK 3级", "HSK 4级", "HSK 5级", "HSK 6级"]
+    description: 如 TOPIK 4级、雅思 6分、CEFR B2、HSK 4级。只挑超出这个水平的词，数量由文本自己决定。
   meaning_language:
     label: 释义语言
     default: 中文
@@ -69,6 +70,7 @@ user_prompt: |
 output:
   list_key: items
   grounded: [source_sentence]  # 防编造：原句必须能在本页原文中找到
+  dictionary: {word: word, meaning: meaning, sentence: source_sentence, kind: kind}  # 释义拿词典核对
   fields:
     word: {label: "单词", required: true, description: "词典形（原形）"}
     surface: {label: "原文形式", description: "在原文中出现的形式，与原文完全一致"}

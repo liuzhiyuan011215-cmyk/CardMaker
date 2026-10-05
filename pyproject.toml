@@ -25,6 +25,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# 本地 Qwen3-TTS 发音（只支持 Apple 芯片的 Mac）
+local-tts = ["mlx-audio>=0.5.7; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [project.scripts]
 cardmaker = "cardmaker.cli:main"

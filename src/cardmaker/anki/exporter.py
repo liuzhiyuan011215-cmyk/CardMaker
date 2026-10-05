@@ -12,9 +12,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..i18n import tr
 from ..pipeline.result import Card
 from .connect import AnkiConnect
-from .notetypes import NOTE_TYPES, NoteType
+from .notetypes import NOTE_TYPES, NoteType, localized
 
 log = logging.getLogger(__name__)
 
@@ -59,12 +60,12 @@ def card_tags(card: Card, template_tags: list[str], book_title: str, extra: list
     source = f"CardMaker::{sanitize_tag(book_title)}"
     if card.chapter:
         source += f"::{sanitize_tag(card.chapter)}"
-    tags = [*template_tags, source, *(sanitize_tag(t) for t in extra if t.strip())]
+    tags = [*map(tr, template_tags), source, *(sanitize_tag(t) for t in extra if t.strip())]  # 领域标签跟着界面语言
     return list(dict.fromkeys(tags))
 
 
 def resolve_note_type(key: str, options: ImportOptions) -> NoteType:
-    note_type = NOTE_TYPES[key]
+    note_type = localized(NOTE_TYPES[key])
     return note_type.renamed(options.model_name) if options.model_name else note_type
 
 
@@ -73,6 +74,8 @@ def note_fields(card: Card, note_type: NoteType, options: ImportOptions) -> dict
     if "CardForward" in fields:  # 单词卡：按用户选的方向生成正向 / 反向卡
         fields["CardForward"] = "y" if options.forward else ""
         fields["CardReverse"] = "y" if options.reverse else ""
+    if fields.get("ExampleLabel"):  # 「🤖 AI 例句」这类标签跟着界面语言
+        fields["ExampleLabel"] = tr(fields["ExampleLabel"])
     return fields
 
 

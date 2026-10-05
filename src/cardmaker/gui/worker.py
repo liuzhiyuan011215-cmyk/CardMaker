@@ -15,7 +15,8 @@ from PySide6.QtCore import QObject, Signal
 from ..anki.connect import AnkiConnectError
 from ..tts import TTSError
 from ..config import Settings
-from ..llm.client import ChatModel, FatalLLMError, LLMClient, explain_error
+from ..dictionary import make_dictionary
+from ..llm.client import ChatModel, FatalLLMError, explain_error, make_llm
 from ..pipeline.runner import GenerateOptions, resume_task, run_generation
 from ..storage import TaskStore
 from ..templates.loader import Template
@@ -90,6 +91,7 @@ class GenerateWorker(BackgroundTask):
         self.input_path, self.template, self.params = input_path, template, params
         self.options, self.settings, self.llm, self.store = options, settings, llm, store
         self.resume_task_id: int | None = None
+        self.dictionary = None  # 测试时可以塞一个假词典
         self._cancel = threading.Event()
 
     @classmethod
@@ -104,10 +106,13 @@ class GenerateWorker(BackgroundTask):
         self._cancel.set()
 
     def work(self):
-        llm = self.llm or LLMClient.from_settings(self.settings.llm)
+        llm = self.llm or make_llm(self.settings.llm)
         store = self.store or TaskStore()
+        dictionary = self.dictionary if self.dictionary is not None else make_dictionary(self.settings)
         # 取消时会返回已生成的部分（任务保存在数据库里，之后可以继续），而不是抛异常
         if self.resume_task_id is not None:
-            return resume_task(store, self.resume_task_id, llm, progress=self.progress.emit, cancel=self._cancel)
+            return resume_task(store, self.resume_task_id, llm, progress=self.progress.emit, cancel=self._cancel,
+                               dictionary=dictionary)
         return run_generation(self.input_path, self.template, self.params, llm, self.options,
-                              progress=self.progress.emit, cancel=self._cancel, store=store)
+                              progress=self.progress.emit, cancel=self._cancel, store=store,
+                              dictionary=dictionary)
