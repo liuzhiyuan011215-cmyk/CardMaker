@@ -57,5 +57,5 @@ card_fields:
   SourceTranslation: ""
   Example: "{{ (book_example or ai_example) | highlight(word) }}"
   ExampleTranslation: "{{ book_example_translation if book_example else ai_example_translation }}"
-  ExampleLabel: "{% if book_example %}📘 教材例句{% elif ai_example %}🤖 AI 例句{% endif %}"
+  ExampleLabel: "{% if book_example %}教材例句{% elif ai_example %}AI 例句{% endif %}"
   Source: "{{ source }}"

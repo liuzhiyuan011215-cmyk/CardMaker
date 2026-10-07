@@ -2,6 +2,7 @@
 import json
 import os
 from collections import Counter
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -16,7 +17,7 @@ from cardmaker.gui.worker import GenerateWorker  # noqa: E402
 from cardmaker.llm.client import FatalLLMError  # noqa: E402
 from cardmaker.pipeline.result import Card  # noqa: E402
 from cardmaker.pipeline.runner import GenerateOptions  # noqa: E402
-from cardmaker.templates.loader import load_template  # noqa: E402
+from cardmaker.templates.loader import list_groups, load_template  # noqa: E402
 from conftest import FakeLLM  # noqa: E402
 
 TEXT = "공유 경제가 빠르게 확산되고 있다. 차는 주차장에 방치되기 마련이다. " * 3
@@ -66,6 +67,23 @@ def test_table_shows_dictionary_check(app, template):
     assert CardTableModel([plain], template).columnCount() == col  # 没有核对结果时不显示这一列
 
 
+def test_review_page_opens_cards_with_dictionary_results(app, template):
+    """回归：卡片带词典核对结果时，检查页调列宽曾经越界崩溃（「词典」列不是模板字段）。"""
+    from pathlib import Path
+
+    from cardmaker.gui.review_page import ReviewPage
+    from cardmaker.pipeline.result import RunResult
+
+    card = make_card(template)
+    card.context["dict_check"] = {"status": "corrected", "original": "船"}
+    page = ReviewPage()
+    page.set_result(RunResult(Path("书.pdf"), template.id, template.name, {}, "书", cards=[card]), template)
+    assert page.model.show_dict and page.model.columnCount() == len(page.model.columns) + 2
+    header = page.table.horizontalHeader()
+    meaning = page.model.columns.index("meaning") + 1
+    assert header.visualIndex(len(page.model.columns) + 1) == header.visualIndex(meaning) + 1  # 「词典」紧挨「释义」
+
+
 def test_table_checkbox_and_delete(app, template):
     cards = [make_card(template), make_card(template)]
     model = CardTableModel(cards, template)
@@ -79,8 +97,8 @@ def test_table_checkbox_and_delete(app, template):
 
 def test_preview_directions(template):
     card = make_card(template)
-    assert "확산되다" in preview_html(card, reverse=False).split("<hr>")[0]
-    assert "自：扩散" in preview_html(card, reverse=True).split("<hr>")[0]
+    assert "확산되다" in preview_html(card, reverse=False).split("<hr")[0]
+    assert "自：扩散" in preview_html(card, reverse=True).split("<hr")[0]
     assert "<b>확산되고</b>" in preview_html(card, reverse=False)
 
 
@@ -111,10 +129,10 @@ def test_wizard_navigation(app, make_pdf):
     pdf = make_pdf([TEXT, TEXT, TEXT])
     window = MainWindow()
     purpose = window.purpose_page
-    assert [g.id for g in purpose.groups][:3] == ["vocab_reading", "vocab_book", "notes"]
-    assert len(purpose.tiles) == 7 and not purpose.next_button.isEnabled()
+    assert [g.id for g in purpose.groups] == ["vocab_book", "vocab_reading"]  # 其他用途先隐藏
+    assert len(purpose.tiles) == 2 and not purpose.next_button.isEnabled()
 
-    purpose.select(purpose.groups[0])  # 第一步：选「单词 · 阅读材料」
+    purpose.select(purpose.groups[1])  # 第一步：选「单词 · 阅读材料」
     window.to_source()
     assert window.stack.currentIndex() == 1
     source = window.source_page
@@ -134,7 +152,7 @@ def test_wizard_navigation(app, make_pdf):
 
 def test_law_has_card_type_choice(app, make_pdf):
     window = MainWindow()
-    law = next(g for g in window.purpose_page.groups if g.id == "law")
+    law = next(g for g in list_groups() if g.id == "law")  # 第一步里隐藏了，但模板还在
     window.purpose_page.select(law)
     window.to_source()
     source = window.source_page
@@ -202,6 +220,7 @@ def test_table_shows_anki_status_after_import(app, template):
 from cardmaker.gui.history_dialog import HistoryDialog  # noqa: E402
 from cardmaker.pipeline.runner import run_generation  # noqa: E402
 from cardmaker.storage import TaskStore  # noqa: E402
+from cardmaker.pipeline.chunking import Chunk  # noqa: E402
 from test_resume import S1, S2, PageFakeLLM, reply  # noqa: E402
 
 
@@ -230,6 +249,17 @@ def test_history_dialog_buttons(app, cancelled_task):
     dialog.resume_requested.connect(resumed.append)
     dialog._resume()
     assert resumed == [task_id]
+
+
+def test_hidden_purposes_are_not_listed(app, cancelled_task, tmp_path):
+    """第一步里隐藏的用途（法律等），历史记录和「继续生成」提醒里也不出现。"""
+    store, task_id = cancelled_task
+    store.create_task(Path("law.pdf"), "法律", "law_cloze", {}, {}, 1, [Chunk("1", "", "本文", "", "文字层")])
+    assert len(store.unfinished_tasks()) == 2
+    dialog = HistoryDialog(None, store)
+    assert [t.id for t in dialog.tasks] == [task_id]
+    window = MainWindow(store)
+    assert "1/2 页" in window.purpose_page.resume_text.text()  # 提醒的是单词任务，不是更新的法律任务
 
 
 def test_resume_banner_and_open_task(app, cancelled_task):
@@ -268,7 +298,7 @@ def test_worker_resumes_task(app, cancelled_task):
 def test_switching_purpose_does_not_leave_old_card_types(app):
     """回归测试：切换用途后，上一个用途的「卡片类型」按钮不能残留。"""
     window = MainWindow()
-    groups = {g.id: g for g in window.purpose_page.groups}
+    groups = {g.id: g for g in list_groups()}
     source = window.source_page
     for gid in ("vocab_reading", "law", "notes", "code"):
         source.set_group(groups[gid])

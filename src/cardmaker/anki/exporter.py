@@ -74,7 +74,7 @@ def note_fields(card: Card, note_type: NoteType, options: ImportOptions) -> dict
     if "CardForward" in fields:  # 单词卡：按用户选的方向生成正向 / 反向卡
         fields["CardForward"] = "y" if options.forward else ""
         fields["CardReverse"] = "y" if options.reverse else ""
-    if fields.get("ExampleLabel"):  # 「🤖 AI 例句」这类标签跟着界面语言
+    if fields.get("ExampleLabel"):  # 「AI 例句」这类标签跟着界面语言
         fields["ExampleLabel"] = tr(fields["ExampleLabel"])
     return fields
 
@@ -83,12 +83,28 @@ def has_directions(note_type_key: str) -> bool:
     return "CardForward" in NOTE_TYPES[note_type_key].fields
 
 
+OLD_LABEL = re.compile(r"(📖|💡) ")  # 旧版卡片模板里标签前的 emoji（2026-10 去掉了，和程序里的预览统一）
+
+
+def upgrade_templates(client: AnkiConnect, name: str, note_type: NoteType) -> None:
+    """已有的笔记类型如果是旧版模板（和新版只差标签前的 emoji），换成新版；用户自己改过的模板不动。"""
+    current = {t["Name"]: {"Front": t["Front"], "Back": t["Back"]} for t in note_type.anki_templates()}
+    existing = client.model_templates(name)
+    if existing == current or set(existing) != set(current):
+        return
+    if all(OLD_LABEL.sub("", text) == current[card][side] for card, sides in existing.items()
+           for side, text in sides.items()):
+        client.update_model_templates(name, current)
+        log.info("已把笔记类型「%s」的卡片模板更新到新版", name)
+
+
 def ensure_note_type(client: AnkiConnect, note_type: NoteType) -> str:
-    """返回可用的笔记类型名：已存在且字段一致就直接用，否则新建（必要时加编号），从不修改已有的。"""
+    """返回可用的笔记类型名：已存在且字段一致就直接用（旧版模板顺便升级），否则新建（必要时加编号）。"""
     existing = set(client.model_names())
     name, n = note_type.name, 2
     while name in existing:
         if client.model_field_names(name) == note_type.fields:
+            upgrade_templates(client, name, note_type)
             return name
         name, n = f"{note_type.name} {n}", n + 1
     client.create_model(name, note_type.fields, note_type.anki_templates(), note_type.css, note_type.is_cloze)

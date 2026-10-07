@@ -94,6 +94,13 @@ class AnkiConnect:
         return self.invoke("createModel", modelName=name, inOrderFields=fields, css=css, isCloze=is_cloze,
                            cardTemplates=templates)
 
+    def model_templates(self, name: str) -> dict[str, dict[str, str]]:
+        """{模板名: {"Front": 正面, "Back": 背面}}。"""
+        return self.invoke("modelTemplates", modelName=name)
+
+    def update_model_templates(self, name: str, templates: dict[str, dict[str, str]]) -> None:
+        self.invoke("updateModelTemplates", model={"name": name, "templates": templates})
+
     def store_media_file(self, path) -> str:
         """把本地音频文件放进 Anki 的媒体文件夹（同名文件会被覆盖，文件名带内容哈希，所以不会误覆盖）。"""
         return self.invoke("storeMediaFile", filename=path.name, path=str(path))

@@ -17,7 +17,7 @@ from ..i18n import tr
 from ..pipeline.result import Card
 from ..templates.loader import Template
 from ..tts import CachedTTS, DashScopeTTS, TTSError, add_audio, make_tts
-from .widgets import label
+from .widgets import StatusLine, label
 from .worker import ProgressTask
 
 ANKICONNECT_CODE = "2055492159"
@@ -29,8 +29,8 @@ DIRECTIONS = [("外语→释义（看单词，口头说意思）", True, False),
 def audio_summary(stats: Counter, free: bool) -> str:
     """发音花了多少：新合成几条、多少字（百炼语音按量计费）；缓存里已有的不再花钱。"""
     if free:
-        return f"🔊 已配上发音（本机生成，免费）：新合成 {stats['new']} 条，{stats['cached']} 条用了缓存"
-    return (f"🔊 已配上发音：新合成 {stats['new']} 条（共 {stats['new_chars']} 字，按量计费），"
+        return f"已配上发音（本机生成，免费）：新合成 {stats['new']} 条，{stats['cached']} 条用了缓存"
+    return (f"已配上发音：新合成 {stats['new']} 条（共 {stats['new_chars']} 字，按量计费），"
             f"{stats['cached']} 条用了缓存（不再花钱）")
 
 
@@ -57,7 +57,7 @@ class AnkiImportDialog(QDialog):
         layout.addWidget(label(f"把勾选的 {len(cards)} 张卡片导入 Anki", "PageTitle"))
 
         status_row = QHBoxLayout()
-        self.status = label("正在连接 Anki…", "Hint", wrap=True)
+        self.status = StatusLine("正在连接 Anki…", "info")
         self.retry = QPushButton(tr("重新检测"))
         self.retry.clicked.connect(lambda: self.start_check())
         self.retry.hide()
@@ -102,7 +102,7 @@ class AnkiImportDialog(QDialog):
         form.addRow(tr("自动标签"), label("  ".join(tags), "Hint", wrap=True))
         layout.addLayout(form)
 
-        self.result_label = label("", "Big", wrap=True)
+        self.result_label = StatusLine()
         self.result_label.hide()
         layout.addWidget(self.result_label)
 
@@ -131,7 +131,7 @@ class AnkiImportDialog(QDialog):
 
     # ------------------------------------------------------------------ 检测 Anki
     def start_check(self, background: bool = True) -> None:
-        self.status.setText(tr("正在连接 Anki…"))
+        self.status.set("正在连接 Anki…", "info")
         self.retry.hide()
         self.import_button.setEnabled(False)
         self._run(lambda report: self.client.deck_names(), self.on_connected, self.on_unavailable, background)
@@ -142,15 +142,16 @@ class AnkiImportDialog(QDialog):
         self.deck.clear()
         self.deck.addItems(sorted(decks))
         self.deck.setCurrentText(current)
-        self.status.setText(tr("✅ 已连接 Anki。牌组、笔记类型会自动创建；Anki 里已有的卡片会自动跳过。"))
+        self.status.set("已连接 Anki。牌组、笔记类型会自动创建；Anki 里已有的卡片会自动跳过。", "ok")
         self.import_button.setEnabled(bool(self.cards))
 
     def on_unavailable(self, message: str) -> None:
         self.connected = False
-        self.status.setText(tr("⚠️ 没有连上 Anki。请先打开 Anki，并确认装了 AnkiConnect 插件"
-                            f"（Anki 菜单：工具 → 插件 → 获取插件，代码 {ANKICONNECT_CODE}），然后点「重新检测」。\n"
-                            "也可以先导出 .apkg 文件，以后双击它导入。"))
+        self.status.set("没有连上 Anki。请先打开 Anki，并确认装了 AnkiConnect 插件"
+                        f"（Anki 菜单：工具 → 插件 → 获取插件，代码 {ANKICONNECT_CODE}），然后点「重新检测」。\n"
+                        "也可以先导出 .apkg 文件，以后双击它导入。", "warn")
         self.retry.show()
+        self.adjustSize()  # 提示变长了：窗口跟着变高，下面的选项不被挤扁
 
     # ------------------------------------------------------------------ 导入
     def options(self) -> ImportOptions:
@@ -195,23 +196,24 @@ class AnkiImportDialog(QDialog):
         self.report = report
         for card, status in zip(self.cards, report.statuses):
             card.anki_status = status
-        text = f"✅ {report.summary()}。"
+        text = report.summary()
         if self.want_audio():
             text += (f"\n{audio_summary(self.audio_stats, self.audio_free)}" if not self.audio_errors
-                     else f"\n🔊 有 {len(self.audio_errors)} 条发音没生成：{self.audio_errors[0]}")
+                     else f"\n有 {len(self.audio_errors)} 条发音没生成：{self.audio_errors[0]}")
         if report.errors:
             text += "\n失败原因：" + "；".join(report.errors[:3])
-        self.status.setText(tr("导入完成。"))
-        self.result_label.setText(tr(text))
+        self.status.set("导入完成。", "ok")
+        self.result_label.set(text, "plain")
         self.result_label.show()
         self.close_button.setText(tr("完成"))
         self.close_button.clicked.disconnect()
         self.close_button.clicked.connect(self.accept)
         self.import_button.hide()
         self.browse_button.show()
+        self.adjustSize()
 
     def on_import_failed(self, message: str) -> None:
-        self.status.setText(tr(f"❌ 导入失败：{message}"))
+        self.status.set(f"导入失败：{message}", "error")
         self.import_button.setEnabled(self.connected)
         self.apkg_button.setEnabled(True)
 

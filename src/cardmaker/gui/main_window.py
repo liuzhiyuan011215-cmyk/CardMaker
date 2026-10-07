@@ -1,8 +1,8 @@
 """主窗口：四步向导（选文件 → 选用途 → 生成 → 检查并导入），外加历史记录和断点续传。"""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget,
+                               QVBoxLayout, QWidget)
 
 from ..config import load_settings
 from ..i18n import tr
@@ -12,12 +12,12 @@ from ..storage import TaskStore
 from ..templates.loader import load_template
 from .history_dialog import HistoryDialog
 from .progress_page import ProgressPage
-from .purpose_page import PurposePage
+from .purpose_page import PurposePage, shown_template_ids
 from .review_page import ReviewPage
 from .settings_dialog import SettingsDialog
 from .source_page import SourcePage
 from .template_editor import TemplateEditorDialog
-from .widgets import StepIndicator, label
+from .widgets import Backdrop, Picture, StepIndicator, button, label
 from .worker import GenerateWorker
 
 STEPS = ["选择用途", "选择资料", "生成卡片", "检查并导入"]
@@ -33,34 +33,41 @@ class MainWindow(QMainWindow):
         self.worker: GenerateWorker | None = None
         self.template = None
 
-        central = QWidget()
-        central.setObjectName("Page")
+        # 三层：玻璃底（Backdrop）→ 浮在上面的白色面板（Sheet，放各步页面）→ 面板里的卡片
+        central = Backdrop()
         root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(24, 0, 24, 24)
         root.setSpacing(0)
 
+        # 顶部：左边名字，中间步骤条，右边历史和设置（三列，左右两列一样宽，步骤条正好居中）
         header = QWidget()
         header.setObjectName("Header")
-        header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        head = QVBoxLayout(header)
-        head.setContentsMargins(40, 18, 40, 14)
+        head = QGridLayout(header)
+        head.setContentsMargins(8, 18, 8, 18)
+        head.setColumnStretch(0, 1)
+        head.setColumnStretch(2, 1)
         top = QHBoxLayout()
+        top.addWidget(Picture("icon.png", 42))  # 和 Dock 里的 App 图标是同一张
+        top.addSpacing(10)
         titles = QVBoxLayout()
         titles.setSpacing(2)
-        titles.addWidget(label("🗂️ CardMaker", "AppTitle"))
-        titles.addWidget(label("把 PDF、单词书、读书笔记一键变成 Anki 卡片", "AppSubtitle"))
+        titles.addWidget(label("CardMaker", "AppTitle"))
+        self.subtitle = label("把单词书、阅读材料一键变成 Anki 卡片", "AppSubtitle")
+        titles.addWidget(self.subtitle)
         top.addLayout(titles)
         top.addStretch()
-        history_button = QPushButton(tr("📜  历史"))
-        history_button.clicked.connect(self.open_history)
-        settings_button = QPushButton(tr("⚙  设置"))
-        settings_button.clicked.connect(lambda: self.open_settings())
-        for button in (history_button, settings_button):
-            top.addWidget(button, alignment=Qt.AlignmentFlag.AlignTop)
-        head.addLayout(top)
+        head.addLayout(top, 0, 0)
         self.steps = StepIndicator(STEPS)
-        head.addSpacing(8)
-        head.addWidget(self.steps)
+        head.addWidget(self.steps, 0, 1)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        history_button = button("历史", "ghost", icon="history")
+        history_button.clicked.connect(self.open_history)
+        settings_button = button("设置", "ghost", icon="settings")
+        settings_button.clicked.connect(lambda: self.open_settings())
+        for widget in (history_button, settings_button):
+            actions.addWidget(widget)
+        head.addLayout(actions, 0, 2)
         root.addWidget(header)
 
         self.stack = QStackedWidget()
@@ -70,7 +77,13 @@ class MainWindow(QMainWindow):
         self.review_page = ReviewPage()
         for page in (self.purpose_page, self.source_page, self.progress_page, self.review_page):
             self.stack.addWidget(page)
-        root.addWidget(self.stack, 1)
+        sheet = QFrame()
+        sheet.setObjectName("Sheet")
+        sheet_layout = QVBoxLayout(sheet)
+        sheet_layout.setContentsMargins(0, 0, 0, 0)
+        sheet_layout.addWidget(self.stack)
+        central.sheet = sheet
+        root.addWidget(sheet, 1)
         self.setCentralWidget(central)
 
         self.purpose_page.next_requested.connect(self.to_source)
@@ -98,7 +111,8 @@ class MainWindow(QMainWindow):
         self.go(0)
 
     def refresh_resume_banner(self) -> None:
-        unfinished = self.store.unfinished_tasks()
+        shown = shown_template_ids()
+        unfinished = [t for t in self.store.unfinished_tasks() if t.template_id in shown]
         self.purpose_page.show_unfinished(unfinished[0] if unfinished else None)
 
     def edit_templates(self) -> None:
@@ -194,6 +208,10 @@ class MainWindow(QMainWindow):
         self.go(0)
         if "Key" in message:
             self.open_settings(message)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.subtitle.setVisible(self.width() >= 1120)  # 窗口窄时藏起副标题，给步骤条让位
 
     def closeEvent(self, event) -> None:
         if self.is_generating():

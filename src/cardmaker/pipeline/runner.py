@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import threading
 import time
 from collections import Counter
@@ -298,6 +299,9 @@ def resume_task(store: TaskStore, task_id: int, llm: ChatModel, progress: Progre
     return process_task(store, task_id, load_template(task.template_id), llm, progress, cancel, dictionary)
 
 
+OLD_LABEL = re.compile(r"^(🤖|📘)\s*")
+
+
 def load_result(store: TaskStore, task_id: int) -> tuple[RunResult, Template]:
     """打开历史任务：读取保存的卡片（包括用户的修改和导入 Anki 的结果），不调用模型。"""
     task = store.get_task(task_id)
@@ -305,4 +309,8 @@ def load_result(store: TaskStore, task_id: int) -> tuple[RunResult, Template]:
     records = store.load_chunks(task_id)
     options = GenerateOptions.from_dict(task.options)
     _, dropped, stopped_early = build_cards(template, task.book_title, records, options.max_cards)
-    return make_result(task, template, records, store.load_cards(task_id), dropped, stopped_early), template
+    cards = store.load_cards(task_id)
+    for card in cards:  # 2026-10-07 以前的卡片，例句标签前带 emoji（「🤖 AI 例句」），统一成现在的纯文字
+        if card.fields.get("ExampleLabel"):
+            card.fields["ExampleLabel"] = OLD_LABEL.sub("", card.fields["ExampleLabel"])
+    return make_result(task, template, records, cards, dropped, stopped_early), template

@@ -6,17 +6,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
-from PySide6.QtWidgets import (QAbstractButton, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-                               QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtCore import (Property, QEasingCurve, QEvent, QObject, QParallelAnimationGroup, QPointF,
+                            QPropertyAnimation, QRectF, QSize, Qt, Signal)
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen, QRadialGradient
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QDialog, QFrame, QGraphicsDropShadowEffect, QHBoxLayout,
+                               QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from ..i18n import tr
 from . import icons
 from .icons import IconView
-from .theme import CAPTION, theme
+from .theme import CAPTION, STATUS_COLORS, qcolor, theme
 
 SUPPORTED_SUFFIXES = (".pdf", ".txt", ".md")
+ASSETS = Path(__file__).parent / "assets"  # 插图（磨砂玻璃风格的立体图标，用学校的生成式 AI 平台画的）
 
 
 def repolish(widget: QWidget) -> None:
@@ -27,7 +29,7 @@ def repolish(widget: QWidget) -> None:
 
 
 def label(text: str = "", role: str | None = None, wrap: bool = False) -> QLabel:
-    """role：title 标题 / strong 加粗正文 / secondary 次要正文 / caption 说明 / meta 更淡的说明。"""
+    """role：title 标题 / strong 加粗正文 / lead 小标题 / secondary 次要正文 / caption 说明 / meta 更淡的说明 / chip 标签。"""
     lbl = QLabel(tr(text))
     if role:
         lbl.setProperty("role", role)
@@ -35,18 +37,131 @@ def label(text: str = "", role: str | None = None, wrap: bool = False) -> QLabel
     return lbl
 
 
+SHADOW = (16, 24, 40)  # 阴影颜色（偏冷的深灰），透明度另给
+
+
+def shadow(widget: QWidget, blur: int = 32, y: int = 8, alpha: int = 22) -> QGraphicsDropShadowEffect:
+    """柔和的投影（样式表画不了阴影）。阴影会画到控件外面约 blur / 2 的地方，外面要留出空间。"""
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur)
+    effect.setOffset(0, y)
+    effect.setColor(QColor(*SHADOW, alpha))
+    widget.setGraphicsEffect(effect)
+    return effect
+
+
+class HoverLift(QObject):
+    """鼠标移上去时阴影变大、变深，控件像浮起来一点；移开再落回去（180 毫秒动画）。"""
+
+    REST, RAISED = (16, 2, 12), (36, 12, 30)  # 模糊半径、向下偏移、透明度
+
+    def __init__(self, widget: QWidget):
+        super().__init__(widget)
+        self.effect = shadow(widget, *self.REST)
+        self.group = QParallelAnimationGroup(self)
+        self.animations = []
+        for name in (b"blurRadius", b"offset", b"color"):
+            animation = QPropertyAnimation(self.effect, name, self)
+            animation.setDuration(180)
+            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.group.addAnimation(animation)
+            self.animations.append(animation)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Type.Enter, QEvent.Type.Leave):
+            blur, y, alpha = self.RAISED if event.type() == QEvent.Type.Enter else self.REST
+            self.group.stop()
+            now = (self.effect.blurRadius(), self.effect.offset(), self.effect.color())
+            for animation, start, end in zip(self.animations, now, (float(blur), QPointF(0, y), QColor(*SHADOW, alpha))):
+                animation.setStartValue(start)
+                animation.setEndValue(end)
+            self.group.start()
+        return False
+
+
+class Backdrop(QWidget):
+    """主窗口的底：浅灰上几团很淡的彩色光，像隔着磨砂玻璃看到的颜色。
+
+    sheet 是浮在上面的白色内容面板，这里在它下面画一圈柔和的阴影（不用 QGraphicsEffect：面板里有表格，
+    整块面板加特效会让滚动变慢）。
+    """
+
+    BLOBS = ((0.0, 0.0, 0.8), (1.0, 0.1, 0.65), (0.2, 1.0, 0.7))  # 每团光的位置（按窗口比例）和半径
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.sheet: QWidget | None = None
+        theme.changed.connect(self.update)
+
+    def paintEvent(self, event):
+        p = theme.palette
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect())
+        painter.fillRect(rect, QColor(p.bg))
+        for (fx, fy, fr), color in zip(self.BLOBS, p.blobs):
+            gradient = QRadialGradient(QPointF(rect.width() * fx, rect.height() * fy),
+                                       max(rect.width(), rect.height()) * fr)
+            inner, outer = QColor(color), QColor(color)
+            outer.setAlpha(0)
+            gradient.setColorAt(0, inner)
+            gradient.setColorAt(1, outer)
+            painter.fillRect(rect, gradient)
+        if self.sheet is not None and self.sheet.isVisible():
+            sheet = QRectF(self.sheet.geometry())
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(*SHADOW, 3))
+            for spread in range(2, 26, 2):  # 由大到小叠很淡的圆角矩形，越靠近面板越深
+                painter.drawRoundedRect(sheet.adjusted(-spread, -spread + 8, spread, spread + 8),
+                                        24 + spread, 24 + spread)
+
+
 def button(text: str, variant: str | None = None, icon: str | None = None, tooltip: str = "") -> QPushButton:
-    """variant：None 次要按钮 / primary 主按钮 / ghost 无边框按钮。"""
+    """variant：None 白底细边框 / primary 黑底主按钮 / secondary 灰底 / ghost 无底无边框 / link 只有文字。"""
     btn = QPushButton(tr(text))
     if variant:
         btn.setProperty("variant", variant)
     if icon:
-        btn.setIcon(icons.icon(icon, "on_accent" if variant == "primary" else "text2"))
-        btn.setIconSize(QSize(16, 16))
+        btn.setIcon(icons.icon(icon, "on_accent" if variant == "primary" else "text"))
+        btn.setIconSize(QSize(22, 16))  # 图标 16，左右各留 3，和文字隔开
     if tooltip:
         btn.setToolTip(tr(tooltip))
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     return btn
+
+
+class Picture(QWidget):
+    """显示一张插图（assets 里的 PNG），平滑缩放，高分屏上也清楚。"""
+
+    def __init__(self, name: str, size: int, parent=None):
+        super().__init__(parent)
+        self.image = QImage(str(ASSETS / name))
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawImage(QRectF(self.rect()), self.image)
+
+
+def segmented(options: list[str], parent: QWidget | None = None) -> tuple[QFrame, QButtonGroup]:
+    """分段标签（shadcn 的 Tabs）：灰色轨道里一排按钮，选中的那个是白色。按钮编号就是 options 里的位置。"""
+    frame = QFrame(parent)
+    frame.setObjectName("Tabs")
+    row = QHBoxLayout(frame)
+    row.setContentsMargins(3, 3, 3, 3)
+    row.setSpacing(2)
+    group = QButtonGroup(frame)
+    for i, text in enumerate(options):
+        btn = QPushButton(tr(text))
+        btn.setCheckable(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        group.addButton(btn, i)
+        row.addWidget(btn)
+    group.button(0).setChecked(True)
+    return frame, group
 
 
 def icon_button(name: str, tooltip: str) -> QPushButton:
@@ -134,18 +249,22 @@ class Footer(QWidget):
 
 
 class PageFrame(QWidget):
-    """向导页面：上面是可滚动、居中限宽的内容区（self.body），下面是固定的操作栏（self.footer）。"""
+    """向导页面：上面是可滚动、居中限宽的内容区（self.body），下面是固定的操作栏（self.footer）。
 
-    def __init__(self, max_width: int = 760, margin: int = 40, scroll: bool = True, top: int = 36, parent=None):
+    bleed：内容区左右多留出的空白，给卡片的阴影用（内容本身仍然和操作栏对齐）。
+    """
+
+    def __init__(self, max_width: int = 760, margin: int = 40, scroll: bool = True, top: int = 36, bleed: int = 0,
+                 parent=None):
         super().__init__(parent)
         self.setObjectName("Page")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         content = QWidget()
         content.setObjectName("PageContent")
         self.body = QVBoxLayout(content)
-        self.body.setContentsMargins(0, top, 0, 32)
+        self.body.setContentsMargins(bleed, top, bleed, 32)
         self.body.setSpacing(0)
-        center = Centered(content, max_width, margin)
+        center = Centered(content, max_width + 2 * bleed, margin - bleed)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -187,9 +306,9 @@ class Dialog(QDialog):
         if heading:
             head = QVBoxLayout()
             head.setSpacing(4)
-            head.addWidget(label(heading, "title"))
+            head.addWidget(label(heading, "dialogtitle"))
             if subtitle:
-                self.subtitle = label(subtitle, "caption", wrap=True)
+                self.subtitle = label(subtitle, "secondary", wrap=True)
                 head.addWidget(self.subtitle)
             self.body.addLayout(head)
         outer = QVBoxLayout(self)
@@ -199,38 +318,65 @@ class Dialog(QDialog):
         self.footer = Footer(max_width=0, margin=28)
         outer.addWidget(self.footer)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.layout().hasHeightForWidth():  # 有折行的文字：按实际宽度把高度补够，不然最后一行会被截掉
+            self.resize(self.width(), max(self.height(), self.heightForWidth(self.width())))
+
 
 # ---------------------------------------------------------------------- 步骤条
 class StepIndicator(QWidget):
-    """顶部步骤条：当前步骤是强调色的实心圆点，做完的打勾，没到的是灰色。"""
+    """顶部步骤条，像苹果的分段控件：半透明的玻璃轨道上，当前步骤是一块浮起来的白色胶囊，
+    换步骤时胶囊滑过去。做完的步骤打勾，没到的是灰色。"""
 
-    DOT, GAP, LINE, PAD = 20, 8, 24, 12  # 圆点直径、圆点和文字的间距、连接线长度、连接线两侧留白
+    DOT, GAP, PAD, INSET, HEIGHT = 20, 8, 14, 4, 40  # 圆点直径、圆点和文字的间距、每段左右留白、胶囊离轨道边、高度
 
     def __init__(self, steps: list[str], parent=None):
         super().__init__(parent)
         self.steps = [tr(step) for step in steps]
         self.current = 0
-        self.setFixedHeight(32)
+        self._thumb = 0.0  # 白色胶囊停在第几段（滑动途中是小数）
+        self.animation = QPropertyAnimation(self, b"thumb", self)
+        self.animation.setDuration(280)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.setFixedHeight(self.HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         theme.changed.connect(self.update)
+
+    def _get_thumb(self) -> float:
+        return self._thumb
+
+    def _set_thumb(self, value: float) -> None:
+        self._thumb = value
+        self.update()
+
+    thumb = Property(float, _get_thumb, _set_thumb)
 
     def _bold(self) -> QFont:
         font = QFont(self.font())
         font.setWeight(QFont.Weight.DemiBold)
         return font
 
-    def _text_widths(self) -> list[int]:
+    def _segments(self) -> list[QRectF]:
         metrics = QFontMetrics(self._bold())  # 按粗体算宽度，切换步骤时位置不跳
-        return [metrics.horizontalAdvance(text) + 2 for text in self.steps]
+        x, rects = float(self.INSET), []
+        for text in self.steps:
+            width = self.PAD + self.DOT + self.GAP + metrics.horizontalAdvance(text) + 2 + self.PAD
+            rects.append(QRectF(x, self.INSET, width, self.HEIGHT - 2 * self.INSET))
+            x += width
+        return rects
 
     def sizeHint(self) -> QSize:
-        width = sum(self.DOT + self.GAP + w for w in self._text_widths())
-        width += (len(self.steps) - 1) * (self.LINE + 2 * self.PAD)
-        return QSize(width, 32)
+        return QSize(int(self._segments()[-1].right()) + self.INSET, self.HEIGHT)
 
     def set_current(self, index: int) -> None:
+        if index == self.current:
+            return
         self.current = index
-        self.update()
+        self.animation.stop()
+        self.animation.setStartValue(self._thumb)
+        self.animation.setEndValue(float(index))
+        self.animation.start()
 
     def state(self, index: int) -> str:
         return "done" if index < self.current else "current" if index == self.current else "todo"
@@ -239,14 +385,30 @@ class StepIndicator(QWidget):
         p = theme.palette
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        track = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setPen(QPen(qcolor(p.glass_border), 1))
+        painter.setBrush(qcolor(p.glass))
+        painter.drawRoundedRect(track, track.height() / 2, track.height() / 2)
+
+        segments = self._segments()
+        index = min(int(self._thumb), len(segments) - 1)
+        a, b, f = segments[index], segments[min(index + 1, len(segments) - 1)], self._thumb - index
+        thumb = QRectF(a.x() + (b.x() - a.x()) * f, a.y(), a.width() + (b.width() - a.width()) * f, a.height())
+        radius = thumb.height() / 2
+        painter.setPen(Qt.PenStyle.NoPen)
+        for spread, alpha in ((3.0, 8), (1.5, 12)):  # 胶囊下面一点点阴影，看起来是浮起来的
+            painter.setBrush(QColor(*SHADOW, alpha))
+            painter.drawRoundedRect(thumb.adjusted(-spread, -spread + 2, spread, spread + 2),
+                                    radius + spread, radius + spread)
+        painter.setBrush(QColor(p.raised))
+        painter.drawRoundedRect(thumb, radius, radius)
+
         normal, bold = QFont(self.font()), self._bold()
         number = QFont(bold)
         number.setPixelSize(CAPTION)
-        cy = self.height() / 2
-        x = 0.0
-        for i, (text, width) in enumerate(zip(self.steps, self._text_widths())):
+        for i, (segment, text) in enumerate(zip(segments, self.steps)):
             state = self.state(i)
-            dot = QRectF(x, cy - self.DOT / 2, self.DOT, self.DOT)
+            dot = QRectF(segment.x() + self.PAD, segment.center().y() - self.DOT / 2, self.DOT, self.DOT)
             if state == "current":
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(p.accent))
@@ -254,27 +416,18 @@ class StepIndicator(QWidget):
                 painter.setPen(QColor(p.on_accent))
                 painter.setFont(number)
                 painter.drawText(dot, Qt.AlignmentFlag.AlignCenter, str(i + 1))
+            elif state == "done":
+                icons.paint(painter, dot.adjusted(2, 2, -2, -2), "checkmark_circle", p.text2)
             else:
-                painter.setPen(QPen(QColor(p.border_strong), 1))
+                painter.setPen(QPen(QColor(p.text3), 1))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawEllipse(dot.adjusted(0.5, 0.5, -0.5, -0.5))
-                if state == "done":
-                    icons.paint(painter, dot.adjusted(4, 4, -4, -4), "checkmark", p.text2)
-                else:
-                    painter.setPen(QColor(p.text3))
-                    painter.setFont(number)
-                    painter.drawText(dot, Qt.AlignmentFlag.AlignCenter, str(i + 1))
-            x += self.DOT + self.GAP
+                painter.setFont(number)
+                painter.drawText(dot, Qt.AlignmentFlag.AlignCenter, str(i + 1))
             painter.setFont(bold if state == "current" else normal)
             painter.setPen(QColor({"current": p.text, "done": p.text2, "todo": p.text3}[state]))
-            painter.drawText(QRectF(x, 0, width, self.height()),
+            painter.drawText(QRectF(dot.right() + self.GAP, 0, segment.right() - dot.right(), self.height()),
                              Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
-            x += width
-            if i < len(self.steps) - 1:
-                x += self.PAD
-                painter.setPen(QPen(QColor(p.border_strong), 1))
-                painter.drawLine(QPointF(x, cy), QPointF(x + self.LINE, cy))
-                x += self.LINE + self.PAD
 
 
 # ---------------------------------------------------------------------- 卡片与选项
@@ -397,7 +550,7 @@ class ChoiceCard(QAbstractButton):
 
 
 class StatusLine(QWidget):
-    """一行状态说明，前面带状态图标：ok 成功 / warn 提醒 / error 失败 / info 说明 / plain 无图标。"""
+    """一行状态说明，前面带状态图标：ok 成功（绿）/ warn 提醒（橙）/ error 失败（红）/ info 说明 / plain 无图标。"""
 
     ICONS = {"ok": "checkmark_circle", "warn": "warning", "error": "error_circle", "info": "info"}
 
@@ -420,7 +573,7 @@ class StatusLine(QWidget):
         name = self.ICONS.get(kind)
         self.icon.setVisible(bool(name))
         if name:
-            self.icon.set_icon(name, "text" if kind in ("ok", "warn", "error") else "text2")
+            self.icon.set_icon(name, STATUS_COLORS.get(kind, "text2"))
         self.icon.setContentsMargins(0, 0, 0, 0)
 
     def setText(self, text: str) -> None:
@@ -447,13 +600,14 @@ class DropZone(QFrame):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(6)
-        self.icon = IconView("document_arrow_up", 24, "text2")
+        self.icon = Picture("upload.png", 64)
         self.title = label(title)
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint = label(hint, "caption", wrap=True)
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint.setMinimumWidth(360)  # 不然一行说明会折出只剩一个字的第二行
         layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignHCenter)
-        layout.addSpacing(6)
+        layout.addSpacing(4)
         layout.addWidget(self.title)
         layout.addWidget(self.hint)
 

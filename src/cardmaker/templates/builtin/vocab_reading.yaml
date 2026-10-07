@@ -91,5 +91,5 @@ card_fields:
   SourceTranslation: "{{ source_translation }}"
   Example: "{{ example | highlight(word) }}"
   ExampleTranslation: "{{ example_translation }}"
-  ExampleLabel: "{% if example %}🤖 AI 例句{% endif %}"
+  ExampleLabel: "{% if example %}AI 例句{% endif %}"
   Source: "{{ source }}"

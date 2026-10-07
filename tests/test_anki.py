@@ -10,7 +10,7 @@ from cardmaker.anki.exporter import card_tags, sanitize_tag, stable_id
 from cardmaker.pipeline.result import Card
 
 # 导入过程允许调用的接口：只有查询和「新增」，没有任何修改或删除
-SAFE_ACTIONS = {"version", "deckNames", "modelNames", "modelFieldNames", "createDeck", "createModel",
+SAFE_ACTIONS = {"version", "deckNames", "modelNames", "modelFieldNames", "modelTemplates", "createDeck", "createModel",
                 "canAddNotesWithErrorDetail", "canAddNotes", "addNotes", "addNote", "storeMediaFile"}
 
 
@@ -21,6 +21,7 @@ class FakeAnki:
         self.calls: list[str] = []
         self.decks = {"系统默认"}
         self.models = dict(models or {})  # 名字 → 字段列表
+        self.templates: dict[str, dict] = {}  # 名字 → {模板名: {"Front", "Back"}}
         self.fronts = set(existing_fronts)
         self.added: list[dict] = []
         self.old_version = old_version
@@ -49,8 +50,15 @@ class FakeAnki:
         self.decks.add(deck)
         return 1
 
+    def do_modelTemplates(self, modelName):
+        return self.templates.get(modelName, {})
+
+    def do_updateModelTemplates(self, model):
+        self.templates[model["name"]] = model["templates"]
+
     def do_createModel(self, modelName, inOrderFields, css, isCloze, cardTemplates):
         self.models[modelName] = inOrderFields
+        self.templates[modelName] = {t["Name"]: {"Front": t["Front"], "Back": t["Back"]} for t in cardTemplates}
         self.cloze_models = getattr(self, "cloze_models", set()) | ({modelName} if isCloze else set())
         return {"name": modelName}
 
@@ -135,6 +143,30 @@ def test_matching_note_type_is_reused():
     fake = FakeAnki(models={"CardMaker 单词": list(VOCAB.fields)})
     import_to_anki(AnkiConnect(transport=fake), make_cards("합의"), "vocab", [], "书", ImportOptions(deck="d"))
     assert "createModel" not in fake.calls
+
+
+def _templates(note_type):
+    return {t["Name"]: {"Front": t["Front"], "Back": t["Back"]} for t in note_type.anki_templates()}
+
+
+def test_old_card_templates_with_emoji_labels_are_upgraded():
+    """旧版程序建的笔记类型（标签前有 📖 💡）：导入时换成新模板，卡片和程序里的预览一致。"""
+    old = {name: {side: text.replace("原文", "📖 原文") for side, text in sides.items()}
+           for name, sides in _templates(VOCAB).items()}
+    fake = FakeAnki(models={"CardMaker 单词": list(VOCAB.fields)})
+    fake.templates["CardMaker 单词"] = old
+    import_to_anki(AnkiConnect(transport=fake), make_cards("합의"), "vocab", [], "书", ImportOptions(deck="d"))
+    assert fake.templates["CardMaker 单词"] == _templates(VOCAB)
+    assert "📖" not in str(fake.templates)
+
+
+def test_card_templates_edited_by_user_are_left_alone():
+    edited = _templates(VOCAB)
+    edited["外语→释义"]["Back"] += "<div>我自己加的</div>"
+    fake = FakeAnki(models={"CardMaker 单词": list(VOCAB.fields)})
+    fake.templates["CardMaker 单词"] = edited
+    import_to_anki(AnkiConnect(transport=fake), make_cards("합의"), "vocab", [], "书", ImportOptions(deck="d"))
+    assert "updateModelTemplates" not in fake.calls and fake.templates["CardMaker 单词"] == edited
 
 
 def test_old_ankiconnect_without_error_detail():

@@ -9,6 +9,7 @@ from ..i18n import tr
 from ..pipeline.result import cost_of, money
 from ..storage import TaskInfo, TaskStore, status_text
 from ..templates.loader import list_templates
+from .purpose_page import shown_template_ids
 from .widgets import label
 
 COLUMNS = ["时间", "书名", "用途", "进度", "卡片", "Token", "费用（元）", "状态"]
@@ -28,7 +29,8 @@ class HistoryDialog(QDialog):
         self.setWindowTitle(tr("历史记录"))
         self.resize(920, 520)
         self.store = store or TaskStore()
-        self.tasks: list[TaskInfo] = self.store.list_tasks()
+        shown = shown_template_ids()  # 第一步里隐藏的用途，历史记录里也不列
+        self.tasks: list[TaskInfo] = [t for t in self.store.list_tasks() if t.template_id in shown]
         names = {t.id: t.name for t in list_templates()}
 
         layout = QVBoxLayout(self)
@@ -39,6 +41,9 @@ class HistoryDialog(QDialog):
         self.table = QTableWidget(len(self.tasks), len(COLUMNS))
         self.table.setHorizontalHeaderLabels([tr(c) for c in COLUMNS])
         self.table.verticalHeader().hide()
+        self.table.setShowGrid(False)
+        self.table.verticalHeader().setDefaultSectionSize(40)
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

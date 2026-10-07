@@ -31,7 +31,11 @@ def _renderer(name: str, color: str) -> QSvgRenderer:
 
 
 def paint(painter: QPainter, rect: QRect | QRectF, name: str, color: str) -> None:
-    _renderer(resolve(name), color).render(painter, QRectF(rect))
+    """图标画成正方形、居中；区域比图标宽时两边留空（按钮里图标和文字之间就多出一点距离）。"""
+    rect = QRectF(rect)
+    side = min(rect.width(), rect.height())
+    square = QRectF(rect.center().x() - side / 2, rect.center().y() - side / 2, side, side)
+    _renderer(resolve(name), color).render(painter, square)
 
 
 class _ThemedIconEngine(QIconEngine):
@@ -42,7 +46,7 @@ class _ThemedIconEngine(QIconEngine):
         self.name, self.role = resolve(name), role
 
     def _color(self, mode: QIcon.Mode) -> str:
-        return theme.color("disabled" if mode == QIcon.Mode.Disabled else self.role)
+        return theme.color("text3" if mode == QIcon.Mode.Disabled else self.role)
 
     def paint(self, painter, rect, mode, state):
         paint(painter, rect, self.name, self._color(mode))
@@ -86,4 +90,5 @@ class IconView(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        paint(painter, self.rect(), self._name, theme.color(self._role))
+        color = self._role if self._role.startswith("#") else theme.color(self._role)  # 也可以直接给颜色
+        paint(painter, self.rect(), self._name, color)

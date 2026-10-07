@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QHBoxLayout, QListWidget, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QListWidget, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
 from ..i18n import tr
 from ..progress import CHECK, EXTRACT, ProgressEvent
@@ -31,22 +31,28 @@ class ProgressPage(QWidget):
         layout.addWidget(label("可以去喝口水，完成后会自动进入下一步。", "Hint"))
         layout.addSpacing(10)
 
+        panel = QFrame()  # 进度、统计和每一页的记录放在一张白色卡片里
+        panel.setObjectName("Panel")
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(28, 24, 28, 20)
+        box.setSpacing(14)
+        layout.addWidget(panel, 1)
         self.stage = label("准备中…", "Big")
-        layout.addWidget(self.stage)
+        box.addWidget(self.stage)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
-        layout.addWidget(self.bar)
+        box.addWidget(self.bar)
         stats = QHBoxLayout()
         self.time_label = label("", "Hint")
         self.cards_label = label("", "Hint")
         stats.addWidget(self.time_label)
         stats.addStretch()
         stats.addWidget(self.cards_label)
-        layout.addLayout(stats)
+        box.addLayout(stats)
 
         self.log = QListWidget()
         self.log.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        layout.addWidget(self.log, 1)
+        box.addWidget(self.log, 1)
 
         bottom = QHBoxLayout()
         bottom.addStretch()
@@ -65,7 +71,7 @@ class ProgressPage(QWidget):
     def start(self) -> None:
         self.log.clear()
         self.bar.setValue(0)
-        self.stage.setText(tr("① 正在读取文件…"))
+        self.stage.setText(tr("正在读取文件…"))
         self.cards_label.setText("")
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText(tr("取消"))
@@ -81,15 +87,15 @@ class ProgressPage(QWidget):
     def on_progress(self, event: ProgressEvent) -> None:
         total = max(event.total, 1)
         if event.stage == EXTRACT:
-            self.stage.setText(tr(f"① 读取文字：{event.done}/{event.total} 页"))
+            self.stage.setText(tr(f"读取文字：{event.done}/{event.total} 页"))
             self.bar.setValue(int(EXTRACT_SHARE * event.done / total))
         elif event.stage == CHECK:  # 卡片已经生成完了，进度条和卡片数不动
-            self.stage.setText(tr(f"③ 用词典核对释义：{event.done}/{event.total}"))
+            self.stage.setText(tr(f"用词典核对释义：{event.done}/{event.total}"))
         else:
             if not self._gen_start:
                 self._gen_start = time.monotonic()
             self._gen_done, self._gen_total = event.done, event.total
-            self.stage.setText(tr(f"② 生成卡片：{event.done}/{event.total} 页"))
+            self.stage.setText(tr(f"生成卡片：{event.done}/{event.total} 页"))
             self.bar.setValue(EXTRACT_SHARE + int((100 - EXTRACT_SHARE) * event.done / total))
             self.cards_label.setText(tr(f"已生成 {event.cards} 张卡片"))
         self.log.addItem(tr(event.message))

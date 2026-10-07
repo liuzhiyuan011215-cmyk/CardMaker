@@ -21,7 +21,7 @@ VOCAB_FIELDS = ["Front", "Meaning", "SourceSentence", "SourceTranslation", "Exam
 _SECTIONS = """
 {{#SourceSentence}}
 <div class="section">
-  <div class="label">📖 原文</div>
+  <div class="label">原文</div>
   <div class="sentence">{{SourceSentence}}</div>
   {{#SourceTranslation}}<div class="translation">{{SourceTranslation}}</div>{{/SourceTranslation}}
 </div>
@@ -133,8 +133,8 @@ pre { background: #f6f8fa; border-radius: 6px; padding: 10px 12px; font-size: 15
 
 CLOZE_FRONT = """<div class="cloze-text">{{cloze:Text}}</div>"""
 CLOZE_BACK = """<div class="cloze-text">{{cloze:Text}}</div>
-{{#Extra}}<div class="section"><div class="label">💡 要点</div>{{Extra}}</div>{{/Extra}}
-{{#SourceText}}<div class="section"><div class="label">📖 原文</div><div class="quote">{{SourceText}}</div></div>{{/SourceText}}
+{{#Extra}}<div class="section"><div class="label">要点</div>{{Extra}}</div>{{/Extra}}
+{{#SourceText}}<div class="section"><div class="label">原文</div><div class="quote">{{SourceText}}</div></div>{{/SourceText}}
 {{#Source}}<div class="source">{{Source}}</div>{{/Source}}"""
 CLOZE_CSS = _COMMON_CSS + """.cloze { font-weight: 700; color: #2563eb; }
 .nightMode .cloze, .night_mode .cloze { color: #6aa9ff; }
@@ -162,8 +162,8 @@ MCQ_FRONT = """<div class="question">{{Question}}</div>
 MCQ_BACK = """<div class="question">{{Question}}</div>
 """ + _OPTIONS.format(cls="answered", prefix="a-") + """
 <div class="answer-line">正确答案：<b>{{Answer}}</b></div>
-{{#Explanation}}<div class="section"><div class="label">💡 解析</div>{{Explanation}}</div>{{/Explanation}}
-{{#SourceText}}<div class="section"><div class="label">📖 原文</div><div class="quote">{{SourceText}}</div></div>{{/SourceText}}
+{{#Explanation}}<div class="section"><div class="label">解析</div>{{Explanation}}</div>{{/Explanation}}
+{{#SourceText}}<div class="section"><div class="label">原文</div><div class="quote">{{SourceText}}</div></div>{{/SourceText}}
 {{#Source}}<div class="source">{{Source}}</div>{{/Source}}
 <script>
   // 把正确选项标成绿色（电脑版、AnkiMobile、AnkiDroid 都支持）
@@ -191,7 +191,7 @@ MCQ = NoteType(
 )
 
 NOTE_TYPES = {"vocab": VOCAB, "cloze": CLOZE, "mcq": MCQ}  # 模板 YAML 里的 note_type → 笔记类型定义
-CARD_LABELS = ["📖 原文", "写出对应的单词", "💡 要点", "💡 解析", "正确答案："]  # 卡片模板里写死的中文标签
+CARD_LABELS = ["原文", "写出对应的单词", "要点", "解析", "正确答案："]  # 卡片模板里写死的中文标签
 
 
 def localized(note_type: NoteType) -> NoteType:

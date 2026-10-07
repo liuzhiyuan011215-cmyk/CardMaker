@@ -8,7 +8,7 @@ from .. import i18n
 from ..config import LLM_PRESETS, LLMSettings, clean_pasted_key, load_settings, mask_key, save_settings
 from ..i18n import tr
 from ..llm.client import check_connection
-from .widgets import label
+from .widgets import StatusLine, label
 from .worker import FunctionTask
 
 PLATFORMS = [("阿里云百炼（通义千问）", "dashscope"), ("DeepSeek", "deepseek"),
@@ -75,8 +75,9 @@ class SettingsDialog(QDialog):
             price_row.addWidget(label(name, "Hint"))
             price_row.addWidget(box)
             price_row.addSpacing(16)
+        price_row.addWidget(label("元 / 百万 token", "Hint"))
         price_row.addStretch()
-        form.addRow(tr("单价（元 / 百万 token）"), price_row)
+        form.addRow(tr("单价"), price_row)
         self._enable_prices(self.settings.llm.provider)
         self.language = self._combo([(lang, lang) for lang in LANGUAGES], self.settings.meaning_language)
         form.addRow(tr("释义默认用"), self.language)
@@ -100,7 +101,8 @@ class SettingsDialog(QDialog):
         form.addRow(tr("韩语 / 中文音色"), self.voice_ko)
         form.addRow(tr("英语音色"), self.voice_en)
 
-        self.dict_enabled = QCheckBox(tr("用词典核对单词释义，防止 AI 写错意思（韩语查《韩国语基础词典》，英语、中文查维基词典）"))
+        self.dict_enabled = QCheckBox(tr("用词典核对单词释义，防止 AI 写错意思"))
+        self.dict_enabled.setToolTip(tr("用词典核对单词释义，防止 AI 写错意思（韩语查《韩国语基础词典》，英语、中文查维基词典）"))
         self.dict_enabled.setChecked(self.settings.dictionary.enabled)
         form.addRow(tr("词典核对"), self.dict_enabled)
         self.dict_key = QLineEdit()
@@ -116,7 +118,7 @@ class SettingsDialog(QDialog):
         test_row = QHBoxLayout()
         self.test_button = QPushButton(tr("测试连接"))
         self.test_button.clicked.connect(self._test)
-        self.test_result = label("", "Hint", wrap=True)
+        self.test_result = StatusLine()
         test_row.addWidget(self.test_button)
         test_row.addWidget(self.test_result, 1)
         layout.addLayout(test_row)
@@ -185,11 +187,11 @@ class SettingsDialog(QDialog):
 
     def _on_test_ok(self, message: str) -> None:
         self.test_button.setEnabled(True)
-        self.test_result.setText(tr(f"✅ {message}"))
+        self.test_result.set(message, "ok")
 
     def _on_test_failed(self, message: str) -> None:
         self.test_button.setEnabled(True)
-        self.test_result.setText(tr(f"❌ {message}"))
+        self.test_result.set(message, "error")
 
     def accept(self) -> None:
         self.settings.llm = self.form_llm_settings()

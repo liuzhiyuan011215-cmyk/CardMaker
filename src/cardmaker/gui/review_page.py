@@ -6,8 +6,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices
-from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QFileDialog, QHBoxLayout, QHeaderView,
-                               QLineEdit, QMessageBox, QPushButton, QRadioButton, QSplitter, QTableView,
+from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView,
+                               QLineEdit, QMessageBox, QPushButton, QSplitter, QTableView,
                                QTextBrowser, QVBoxLayout, QWidget)
 
 from ..config import load_settings
@@ -18,8 +18,10 @@ from ..pipeline.postprocess import CLOZE, add_mcq_options
 from ..pipeline.result import Card, RunResult, money
 from ..storage import TaskStore
 from ..templates.loader import Template
+from . import icons
 from .anki_dialog import AnkiImportDialog
-from .widgets import label
+from .theme import theme
+from .widgets import Dialog, button, label, segmented
 
 HIDDEN_FIELDS = {"surface", "option_a", "option_b", "option_c", "option_d", "answer"}  # 内部用的字段，不在表格里显示
 READ_ONLY_FIELDS = {"kind"}
@@ -192,7 +194,7 @@ def _cloze(text: str, reveal: bool) -> str:
         answer, hint = match.group(1), match.group(2)
         if reveal:
             return f"<b>{answer}</b>"
-        return f"<span style='color:#2563eb; font-weight:600;'>[{hint or '……'}]</span>"
+        return f"<span style='color:{theme.color('highlight')}; font-weight:600;'>[{hint or '……'}]</span>"
     return CLOZE.sub(repl, text)
 
 
@@ -200,21 +202,22 @@ def _sections(f: dict, pairs: list[tuple[str, str]]) -> str:
     html = ""
     for title, key in pairs:
         if f.get(key):
-            html += f"<p style='color:#667085; font-size:13px;'>{tr(title)}</p><p style='font-size:16px;'>{f[key]}</p>"
+            html += f"<p style='color:{theme.color('text2')}; font-size:13px;'>{tr(title)}</p><p style='font-size:16px;'>{f[key]}</p>"
     if f.get("Source"):
-        html += f"<p style='color:#98a2b3; font-size:12px;'>{f['Source']}</p>"
+        html += f"<p style='color:{theme.color('text3')}; font-size:12px;'>{f['Source']}</p>"
     return html
 
 
 def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") -> str:
     """卡片预览（Qt 富文本）。字段内容已经过转义，只含 <b>、<pre> 等简单标记。"""
     f = card.fields
-    front_label = f"<p style='color:#98a2b3; font-size:12px;'>{tr('正面')}</p>"
-    back_label = f"<hr><p style='color:#98a2b3; font-size:12px;'>{tr('背面')}</p>"
+    front_label = f"<p style='color:{theme.color('text3')}; font-size:12px;'>{tr('正面')}</p>"
+    back_label = (f"<hr style='background-color:{theme.color('border')}'>"  # 正反面之间一条浅灰线
+                  f"<p style='color:{theme.color('text3')}; font-size:12px;'>{tr('背面')}</p>")
     if note_type == "cloze":
         return (front_label + f"<p style='font-size:19px;'>{_cloze(f.get('Text', ''), False)}</p>" + back_label
                 + f"<p style='font-size:19px;'>{_cloze(f.get('Text', ''), True)}</p>"
-                + _sections(f, [("💡 要点", "Extra"), ("📖 原文", "SourceText")]))
+                + _sections(f, [("要点", "Extra"), ("原文", "SourceText")]))
     if note_type == "mcq":
         def options(answer: str | None) -> str:
             rows = ""
@@ -225,9 +228,9 @@ def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") ->
         question = f"<p style='font-size:18px; font-weight:600;'>{f.get('Question', '')}</p>"
         return (front_label + question + options(None) + back_label + question + options(f.get("Answer"))
                 + f"<p>{tr('正确答案：')}<b>{f.get('Answer', '')}</b></p>"
-                + _sections(f, [("💡 解析", "Explanation"), ("📖 原文", "SourceText")]))
+                + _sections(f, [("解析", "Explanation"), ("原文", "SourceText")]))
     if "Front" not in f or "Meaning" not in f:  # 其他笔记类型：直接列出所有字段
-        rows = "".join(f"<tr><td style='color:#667085'>{k}</td><td>{v}</td></tr>" for k, v in f.items())
+        rows = "".join(f"<tr><td style='color:{theme.color('text2')}'>{k}</td><td>{v}</td></tr>" for k, v in f.items())
         return f"<table cellpadding='6' width='100%'>{rows}</table>"
     parts = [
         front_label,
@@ -237,20 +240,42 @@ def preview_html(card: Card, reverse: bool = False, note_type: str = "vocab") ->
     ]
 
     def section(title: str, body: str, translation: str) -> None:
-        parts.append(f"<p style='color:#667085; font-size:13px;'>{tr(title)}</p>")
+        parts.append(f"<p style='color:{theme.color('text2')}; font-size:13px;'>{tr(title)}</p>")
         parts.append(f"<p style='font-size:17px;'>{body}</p>")
         if translation:
-            parts.append(f"<p style='color:#667085; font-size:15px;'>{translation}</p>")
+            parts.append(f"<p style='color:{theme.color('text2')}; font-size:15px;'>{translation}</p>")
 
     if f.get("SourceSentence"):
-        section("📖 原文", f["SourceSentence"], f.get("SourceTranslation", ""))
+        section("原文", f["SourceSentence"], f.get("SourceTranslation", ""))
     if f.get("Example"):
         section(f.get("ExampleLabel") or "例句", f["Example"], f.get("ExampleTranslation", ""))
-    parts.append("<table width='100%' cellpadding='10' bgcolor='#f4f4f4'><tr><td>"
+    parts.append(f"<table width='100%' cellpadding='10' bgcolor='{theme.color('subtle')}'><tr><td>"
                  f"<span style='font-weight:600;'>{tr('单词意思：')}</span>{f['Meaning']}</td></tr></table>")
     if f.get("Source"):
-        parts.append(f"<p style='color:#98a2b3; font-size:12px;'>{f['Source']}</p>")
+        parts.append(f"<p style='color:{theme.color('text3')}; font-size:12px;'>{f['Source']}</p>")
     return "".join(parts)
+
+
+class StatsDialog(Dialog):
+    """「详细统计」：第一行（书名、模板）是副标题，其余每行左边项目名、右边数字（可以选中复制）。"""
+
+    def __init__(self, parent, lines: list[str]):
+        super().__init__(parent, "详细统计", heading="详细统计", subtitle=lines[0], width=680)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(10)
+        for row, line in enumerate(lines[1:]):
+            sep = "：" if "：" in line else ": "  # 韩文翻译后是半角冒号
+            name, _, value = line.partition(sep)
+            value_label = label(value or name, wrap=True)
+            value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.addWidget(label(name if value else "", "secondary"), row, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(value_label, row, 1)
+        grid.setColumnStretch(1, 1)
+        self.body.addLayout(grid)
+        close = button("关闭", "primary")
+        close.clicked.connect(self.accept)
+        self.footer.right.addWidget(close)
 
 
 class ReviewPage(QWidget):
@@ -277,15 +302,16 @@ class ReviewPage(QWidget):
 
         toolbar = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText(tr("🔍 搜索卡片内容…"))
+        self.search.setPlaceholderText(tr("搜索卡片内容…"))
+        self.search.addAction(icons.icon("search", "text3"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.setClearButtonEnabled(True)
         self.search.setMaximumWidth(320)
         toolbar.addWidget(self.search)
         for text, slot in (("全选", lambda: self._select_all(True)), ("全不选", lambda: self._select_all(False)),
                            ("删除选中的行", self._delete_rows)):
-            button = QPushButton(tr(text))
-            button.clicked.connect(slot)
-            toolbar.addWidget(button)
+            tool = button(text)
+            tool.clicked.connect(slot)
+            toolbar.addWidget(tool)
         toolbar.addStretch()
         self.count_label = label("", "Hint")
         toolbar.addWidget(self.count_label)
@@ -299,9 +325,11 @@ class ReviewPage(QWidget):
         self.table = QTableView()
         self.table.setModel(self.proxy)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.setWordWrap(False)
-        self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table.verticalHeader().hide()
+        self.table.verticalHeader().setDefaultSectionSize(40)
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.selectionModel().currentRowChanged.connect(lambda *_: self._update_preview())
 
@@ -311,17 +339,13 @@ class ReviewPage(QWidget):
         direction = QHBoxLayout()
         direction.addWidget(label("卡片预览", "Big"))
         direction.addStretch()
-        self.forward = QRadioButton(tr("外语→释义"))
-        self.reverse = QRadioButton(tr("释义→外语"))
-        self.forward.setChecked(True)
-        group = QButtonGroup(self)
-        for button in (self.forward, self.reverse):
-            group.addButton(button)
-            button.toggled.connect(lambda *_: self._update_preview())
-            direction.addWidget(button)
+        self.direction_tabs, group = segmented(["外语→释义", "释义→外语"])
+        self.forward, self.reverse = group.buttons()
+        group.idToggled.connect(lambda *_: self._update_preview())
+        direction.addWidget(self.direction_tabs)
         preview_layout.addLayout(direction)
         self.preview = QTextBrowser()
-        self.preview.document().setDefaultStyleSheet("b { color: #2563eb; }")
+        self.preview.document().setDefaultStyleSheet(f"b {{ color: {theme.color('highlight')}; }}")
         preview_layout.addWidget(self.preview, 1)
 
         splitter = QSplitter()
@@ -332,10 +356,10 @@ class ReviewPage(QWidget):
         layout.addWidget(splitter, 1)
 
         bottom = QHBoxLayout()
-        restart = QPushButton(tr("↺  再做一份"))
+        restart = button("再做一份", icon="arrow_counterclockwise")
         restart.clicked.connect(self.restart_requested)
         bottom.addWidget(restart)
-        stats = QPushButton(tr("📊 详细统计"))
+        stats = button("详细统计", icon="info")
         stats.clicked.connect(self._show_stats)
         bottom.addWidget(stats)
         bottom.addStretch()
@@ -351,8 +375,7 @@ class ReviewPage(QWidget):
     # ------------------------------------------------------------------
     def set_result(self, result: RunResult, template: Template, store: TaskStore | None = None) -> None:
         self.result, self.template, self.store = result, template, store
-        for button in (self.forward, self.reverse):  # 「外语→释义 / 释义→外语」只对单词卡有意义
-            button.setVisible(template.note_type == "vocab")
+        self.direction_tabs.setVisible(template.note_type == "vocab")  # 「外语→释义 / 释义→外语」只对单词卡有意义
         self.model = CardTableModel(result.cards, template, self)
         self.model.dataChanged.connect(lambda *_: (self._update_count(), self._update_preview(),
                                                    self._save_timer.start()))
@@ -395,14 +418,21 @@ class ReviewPage(QWidget):
         card = self._current_card()
         note_type = self.template.note_type if self.result else "vocab"
         self.preview.setHtml(preview_html(card, self.reverse.isChecked(), note_type) if card else
-                             "<p style='color:#98a2b3'>在左边点一张卡片，这里显示它的样子。</p>")
+                             f"<p style='color:{theme.color('text3')}'>{tr('在左边点一张卡片，这里显示它的样子。')}</p>")
 
     def _resize_columns(self) -> None:
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.setColumnWidth(0, 56)
         for col in range(1, self.model.columnCount()):
-            wide = not self.model.is_status_column(col) and self.model.field_at(col) in WIDE_FIELDS
+            extra = self.model.is_status_column(col) or self.model.is_dict_column(col)  # 「词典」「Anki」列不是字段
+            wide = not extra and self.model.field_at(col) in WIDE_FIELDS
             self.table.setColumnWidth(col, 260 if wide else 120)
+        for col in range(self.model.columnCount()):  # 先恢复原来的列顺序（换了一批卡片）
+            header.moveSection(header.visualIndex(col), col)
+        if self.model.show_dict and "meaning" in self.model.columns:  # 「词典」列挪到「释义」右边，一眼就能对上
+            dict_col = len(self.model.columns) + 1
+            header.moveSection(header.visualIndex(dict_col), self.model.columns.index("meaning") + 2)
 
     def _update_count(self) -> None:
         if self.model:
@@ -429,11 +459,8 @@ class ReviewPage(QWidget):
         return "\n".join(tr(line) for line in self.result.summary_lines()) if self.result else ""
 
     def _show_stats(self) -> None:
-        box = QMessageBox(self)
-        box.setWindowTitle(tr("详细统计"))
-        box.setText(self.stats_text())
-        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)  # 数字可以选中复制
-        box.exec()
+        if self.result:
+            StatsDialog(self, self.stats_text().split("\n")).exec()
 
     def _select_all(self, selected: bool) -> None:
         if self.model:

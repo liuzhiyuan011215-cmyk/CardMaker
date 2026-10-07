@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, Qt
+from PySide6.QtCore import QLocale
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -12,7 +12,7 @@ from ..config import load_settings
 from ..i18n import set_language
 from ..log import setup_logging
 from .main_window import MainWindow
-from .style import STYLESHEET
+from .theme import theme
 
 ICON = Path(__file__).parent / "assets" / "icon.png"
 
@@ -22,12 +22,7 @@ def create_app(argv: list[str] | None = None) -> QApplication:
     app.setApplicationName("CardMaker")
     app.setApplicationDisplayName("CardMaker")
     app.setStyle("Fusion")
-    try:  # 统一用浅色外观，不跟随系统深色模式，演示时效果稳定
-        app.styleHints().setColorScheme(Qt.ColorScheme.Light)
-    except AttributeError:
-        pass
-    app.setPalette(app.style().standardPalette())
-    app.setStyleSheet(STYLESHEET)
+    theme.install(app)  # 配色、字号、样式表都在 theme.py；默认浅色，和答辩幻灯片一个调子
     if ICON.exists():
         app.setWindowIcon(QIcon(str(ICON)))
     return app

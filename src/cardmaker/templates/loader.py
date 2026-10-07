@@ -333,6 +333,9 @@ class TemplateGroup:
     variants: list[Template]
 
 
+READY_GROUPS = ("vocab_book", "vocab_reading")  # 已经评估过、对用户开放的用途（界面第一步和大模型接口只列这些）
+
+
 def list_groups() -> list[TemplateGroup]:
     groups: dict[str, TemplateGroup] = {}
     for tpl in list_templates():  # 已按 order 排好

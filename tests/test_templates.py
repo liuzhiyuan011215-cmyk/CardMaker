@@ -86,7 +86,7 @@ def test_card_fields_mapping(reading):
     assert fields["Meaning"] == "自：被搁置"
     assert fields["SourceSentence"] == "차는 주차장에 <b>방치되기</b> 마련이다."
     assert fields["Example"] == "빈집이 오래 <b>방치되어</b> 있었다."  # 用词干找到变形
-    assert fields["ExampleLabel"] == "🤖 AI 例句"
+    assert fields["ExampleLabel"] == "AI 例句"
     assert fields["Source"] == "《书》 · p.37"
 
 
@@ -102,11 +102,11 @@ def test_vocab_book_prefers_book_example():
     base = {"word": "합의", "pos": "名", "meaning": "协议"}
     with_book = book.render_card_fields({**base, "book_example": "합의에 이르렀다.", "book_example_translation": "达成了协议。",
                                          "ai_example": "", "ai_example_translation": ""}, {"source": ""})
-    assert with_book["ExampleLabel"] == "📘 教材例句"
+    assert with_book["ExampleLabel"] == "教材例句"
     assert with_book["ExampleTranslation"] == "达成了协议。"
     with_ai = book.render_card_fields({**base, "book_example": "", "book_example_translation": "",
                                        "ai_example": "합의를 했다.", "ai_example_translation": "达成了一致。"}, {"source": ""})
-    assert with_ai["ExampleLabel"] == "🤖 AI 例句"
+    assert with_ai["ExampleLabel"] == "AI 例句"
     assert with_ai["Example"] == "<b>합의</b>를 했다."  # 名词原样找到时只加粗名词本身，不带助词
 
 

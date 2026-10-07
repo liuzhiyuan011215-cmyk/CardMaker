@@ -21,7 +21,8 @@ from ..ingest.notes import FORMAT_NAMES, PER_PAGE, books_in, parse_notes
 from ..ingest.pdf import PdfInfo, inspect_pdf
 from ..pipeline.runner import GenerateOptions
 from ..templates.loader import ParamSpec, Template, TemplateGroup
-from .widgets import DropZone, label
+from .purpose_page import CARDS
+from .widgets import DropZone, Picture, button, label
 
 # 示例文件（自己编写，无版权问题），没有现成资料时可以直接试用
 DEMO_DIR = Path(__file__).resolve().parents[3] / "samples" / "demo"
@@ -126,7 +127,7 @@ class SourcePage(QWidget):
         head = QHBoxLayout()
         head.addWidget(label("第二步：选择资料和选项", "PageTitle"))
         head.addSpacing(16)
-        self.purpose_label = label("", "Big")
+        self.purpose_label = label("", "tag")
         head.addWidget(self.purpose_label)
         change = QPushButton(tr("换一个用途"))
         change.setObjectName("Link")
@@ -154,9 +155,8 @@ class SourcePage(QWidget):
         self.file_panel = QFrame()
         file_row = QHBoxLayout(self.file_panel)
         file_row.setContentsMargins(0, 8, 0, 8)
-        icon = label("📄")
-        icon.setStyleSheet("font-size: 36px;")
-        file_row.addWidget(icon)
+        file_row.addWidget(Picture("document.png", 52))
+        file_row.addSpacing(4)
         info_col = QVBoxLayout()
         self.file_name = label("", "Big", wrap=True)
         self.file_detail = label("", "Hint", wrap=True)
@@ -243,7 +243,7 @@ class SourcePage(QWidget):
         body.addWidget(right, 4)
 
         bottom = QHBoxLayout()
-        back = QPushButton(tr("←  上一步"))
+        back = button("上一步", icon="arrow_left")
         back.clicked.connect(self.back_requested)
         bottom.addWidget(back)
         bottom.addStretch()
@@ -266,7 +266,7 @@ class SourcePage(QWidget):
     def set_group(self, group: TemplateGroup) -> None:
         was_notes = self.is_notes
         self.group = group
-        self.purpose_label.setText(f"{group.icon} {tr(group.name)}")
+        self.purpose_label.setText(tr(CARDS[group.id][0] if group.id in CARDS else group.name))
         for button in self.variant_group.buttons():  # 卡片类型（填空卡 / 选择题）
             self.variant_group.removeButton(button)
             self.variant_layout.removeWidget(button)

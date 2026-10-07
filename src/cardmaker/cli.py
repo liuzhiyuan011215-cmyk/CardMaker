@@ -5,6 +5,7 @@
   cardmaker extract book.pdf --pages 1-3         # 只看提取出的文字（含 OCR）
   cardmaker templates list                       # 查看内置模板
   cardmaker generate book.pdf -t vocab_reading --level "TOPIK 4级" --max-cards 20
+  cardmaker mcp                                  # 大模型接口（MCP）：让 Claude 等 AI 助手直接操作
 """
 from __future__ import annotations
 
@@ -209,6 +210,13 @@ def finish_run(result, args) -> int:
     return 0 if result.cards else 2
 
 
+def cmd_mcp(args) -> int:
+    from .mcp_server import serve
+
+    serve()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cardmaker", description="把 PDF 或读书笔记自动转换成 Anki 卡片")
     parser.add_argument("-v", "--verbose", action="store_true", help="终端显示详细日志")
@@ -256,6 +264,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--out", default="output", help="输出目录（默认 output/）")
     p.add_argument("--no-open", action="store_true", help="完成后不自动在浏览器打开预览页")
     p.set_defaults(func=cmd_resume)
+
+    p = sub.add_parser("mcp", help="启动大模型接口（MCP），让 Claude 等 AI 助手直接操作 CardMaker")
+    p.set_defaults(func=cmd_mcp)
     return parser
 
 
