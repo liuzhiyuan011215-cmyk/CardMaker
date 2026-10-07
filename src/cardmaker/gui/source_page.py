@@ -399,7 +399,7 @@ class SourcePage(QWidget):
                                   ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi,
                                   concurrency=settings.concurrency, source=template.source,
                                   notes_book=self.book_combo.currentData() if self.book_row.isVisible() else None,
-                                  book_title=self.book_title)
+                                  book_title=self.book_title, **settings.llm.billing())
         return template, params, options
 
     def _update_pages(self) -> None:

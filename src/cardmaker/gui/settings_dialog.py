@@ -1,8 +1,8 @@
 """设置窗口：选大模型平台、粘贴 API Key、测试连接。"""
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-                               QLineEdit, QPushButton, QSpinBox, QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
+                               QHBoxLayout, QLineEdit, QPushButton, QSpinBox, QVBoxLayout)
 
 from .. import i18n
 from ..config import LLM_PRESETS, LLMSettings, clean_pasted_key, load_settings, mask_key, save_settings
@@ -64,6 +64,20 @@ class SettingsDialog(QDialog):
         self.url = QLineEdit(self.settings.llm.base_url)
         form.addRow(tr("模型"), self.model)
         form.addRow(tr("接口地址"), self.url)
+        price_row = QHBoxLayout()
+        self.price_in, self.price_out = QDoubleSpinBox(), QDoubleSpinBox()
+        for name, box, value in (("输入", self.price_in, self.settings.llm.price_input_per_m),
+                                 ("输出", self.price_out, self.settings.llm.price_output_per_m)):
+            box.setRange(0, 1000)
+            box.setDecimals(3)
+            box.setValue(value)
+            box.setToolTip(tr("在大模型平台的价格说明里查。填 0 就只显示 token 数，不算费用；本地模型不花钱，不用填。"))
+            price_row.addWidget(label(name, "Hint"))
+            price_row.addWidget(box)
+            price_row.addSpacing(16)
+        price_row.addStretch()
+        form.addRow(tr("单价（元 / 百万 token）"), price_row)
+        self._enable_prices(self.settings.llm.provider)
         self.language = self._combo([(lang, lang) for lang in LANGUAGES], self.settings.meaning_language)
         form.addRow(tr("释义默认用"), self.language)
         self.ui_language = self._combo(i18n.LANGUAGES, self.settings.ui_language or i18n.LANGUAGE)
@@ -132,8 +146,13 @@ class SettingsDialog(QDialog):
             self.model.setText(LLM_PRESETS[key]["model"])
             self.url.setText(LLM_PRESETS[key]["base_url"])
         self.key.setEnabled(key != "ollama")
+        self._enable_prices(key)
         if key == "ollama":  # 本地模型一次只算一页，同时发多页只会排队超时
             self.concurrency.setValue(1)
+
+    def _enable_prices(self, provider: str) -> None:
+        for box in (self.price_in, self.price_out):  # 本地模型不花钱
+            box.setEnabled(provider != "ollama")
 
     def form_llm_settings(self) -> LLMSettings:
         """按窗口里填的内容组装一份大模型设置（没粘贴新 Key 时沿用原来的）。"""
@@ -145,6 +164,7 @@ class SettingsDialog(QDialog):
             llm.provider, llm.extra_body = "custom", {}
         llm.model = self.model.text().strip()
         llm.base_url = self.url.text().strip()
+        llm.price_input_per_m, llm.price_output_per_m = self.price_in.value(), self.price_out.value()
         typed, _ = clean_pasted_key(self.key.text())
         if typed:
             llm.api_key = typed

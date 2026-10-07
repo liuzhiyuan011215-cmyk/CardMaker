@@ -15,7 +15,7 @@ from ..export.preview import write_outputs
 from ..i18n import tr
 from ..pipeline.meaning_check import CORRECTED, ERROR, LABELS as CHECK_LABELS, NOT_FOUND, UNMATCHED, check_status
 from ..pipeline.postprocess import CLOZE, add_mcq_options
-from ..pipeline.result import Card, RunResult
+from ..pipeline.result import Card, RunResult, money
 from ..storage import TaskStore
 from ..templates.loader import Template
 from .anki_dialog import AnkiImportDialog
@@ -38,6 +38,19 @@ def check_tooltip(check: dict) -> str:
     if check.get("note"):
         lines.append(check["note"])
     return "\n".join(lines)
+
+
+def cost_line(result: RunResult) -> str:
+    """摘要的第三行：费用，以及平均每张卡用多少 token、花多少钱。"""
+    per_card = f"{result.usage.total_tokens / len(result.cards):,.0f}"
+    cost = result.cost
+    if result.options.get("local_model"):
+        return f"本地模型，不花钱（平均每张 {per_card} token）"
+    if cost is None:
+        return f"平均每张 {per_card} token（在「设置」里填上单价就能算出费用）"
+    return f"费用约 {money(cost)} 元（平均每张 {per_card} token，约 {money(cost / len(result.cards))} 元）"
+
+
 WIDE_FIELDS = {"source_sentence", "source_translation", "example", "example_translation", "book_example",
                "book_example_translation", "ai_example", "ai_example_translation"}
 
@@ -322,6 +335,9 @@ class ReviewPage(QWidget):
         restart = QPushButton(tr("↺  再做一份"))
         restart.clicked.connect(self.restart_requested)
         bottom.addWidget(restart)
+        stats = QPushButton(tr("📊 详细统计"))
+        stats.clicked.connect(self._show_stats)
+        bottom.addWidget(stats)
         bottom.addStretch()
         self.export_button = QPushButton(tr("导出文件…"))
         self.export_button.clicked.connect(self._export)
@@ -350,9 +366,12 @@ class ReviewPage(QWidget):
         u = result.usage
         note = "（已取消，下面是取消前生成的卡片）" if result.cancelled else ""
         dropped = "，".join(f"{reason} {n}" for reason, n in result.dropped.items())
-        self.summary.setText(tr(f"《{result.book_title}》 · {result.template_name}{note}\n"
-                             f"共 {len(result.cards)} 张卡片 · 用了 {u.total_tokens:,} 个 token · 耗时 {result.elapsed:.0f} 秒"
-                             + (f" · 已自动过滤：{dropped}" if dropped else "")))
+        lines = [f"《{result.book_title}》 · {result.template_name}{note}",
+                 f"共 {len(result.cards)} 张卡片 · 用了 {u.total_tokens:,} 个 token · 耗时 {result.elapsed:.0f} 秒"
+                 + (f" · 已自动过滤：{dropped}" if dropped else "")]
+        if result.cards:
+            lines.append(cost_line(result))
+        self.summary.setText("\n".join(tr(line) for line in lines))
         self._update_count()
         if result.cards:
             self.table.selectRow(0)
@@ -404,6 +423,17 @@ class ReviewPage(QWidget):
             self._resize_columns()
             self.table.selectRow(0)
             self.summary.setText(f"{self.summary.text()}\n{tr(f'Anki：{dialog.report.summary()}')}")
+
+    def stats_text(self) -> str:
+        """「详细统计」：页数、丢弃原因、词典核对结果、token（含词典核对）、费用、平均每张卡、耗时。"""
+        return "\n".join(tr(line) for line in self.result.summary_lines()) if self.result else ""
+
+    def _show_stats(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("详细统计"))
+        box.setText(self.stats_text())
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)  # 数字可以选中复制
+        box.exec()
 
     def _select_all(self, selected: bool) -> None:
         if self.model:

@@ -182,7 +182,7 @@ def cmd_generate(args) -> int:
     options = GenerateOptions(pages=parse_pages(args.pages), max_cards=args.max_cards,
                               ocr_mode=args.ocr, ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi,
                               book_title=args.title, concurrency=args.concurrency or settings.concurrency,
-                              source=template.source, notes_book=args.book)
+                              source=template.source, notes_book=args.book, **settings.llm.billing())
     llm = make_llm(settings.llm)
     print(f"模型：{settings.llm.model}（{settings.llm.base_url}，Key {mask_key(settings.llm.api_key)}）",
           file=sys.stderr)

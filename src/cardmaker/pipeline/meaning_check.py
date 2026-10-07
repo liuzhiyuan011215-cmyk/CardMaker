@@ -24,7 +24,7 @@ from collections import Counter
 from collections.abc import Callable
 
 from ..dictionary import DictError, Entry, Sense, lookup_key
-from ..llm.client import ChatModel, parse_json_object
+from ..llm.client import ChatModel, Usage, parse_json_object
 from ..progress import CHECK, ProgressEvent
 from .result import Card
 
@@ -117,16 +117,33 @@ def judge_meanings(llm: ChatModel, jobs: list[dict], meaning_language: str) -> d
     return verdicts
 
 
+class _Metered:
+    """转发给模型，顺便记下每次调用用掉的 token。"""
+
+    def __init__(self, llm: ChatModel, usage: Usage):
+        self.llm, self.usage = llm, usage
+
+    def chat(self, messages: list[dict]) -> tuple[str, Usage]:
+        content, used = self.llm.chat(messages)
+        self.usage.add(used)
+        return content, used
+
+
 # ---------------------------------------------------------------------- 主流程
 def check_meanings(cards: list[Card], template, dictionary, llm: ChatModel | None, meaning_language: str = "中文",
                    progress: Callable[[ProgressEvent], None] | None = None,
-                   cancel: threading.Event | None = None) -> Counter:
-    """逐张核对单词卡释义，就地修改卡片，返回各结果的数量。模板没声明 dictionary 时什么都不做。"""
+                   cancel: threading.Event | None = None, usage: Usage | None = None) -> Counter:
+    """逐张核对单词卡释义，就地修改卡片，返回各结果的数量。模板没声明 dictionary 时什么都不做。
+
+    usage：给了就把核对时调用模型用掉的 token 加进去（算进任务的用量和费用）。
+    """
     spec = template.spec.output.dictionary
     if spec is None or dictionary is None:
         return Counter()
     if getattr(llm, "local", False):  # 本地小模型选义项常选错，只做字面比对，对不上的标出来让人确认
         llm = None
+    elif llm is not None and usage is not None:
+        llm = _Metered(llm, usage)
     say = progress or (lambda event: None)
     todo = [c for c in cards if dictionary.covers(str(c.data.get(spec.word) or ""), meaning_language)
             and not (spec.kind and c.data.get(spec.kind) == "phrase")]  # 短语、句型词典里大多没有，不核对

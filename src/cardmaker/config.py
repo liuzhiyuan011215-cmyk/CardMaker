@@ -46,7 +46,7 @@ class LLMSettings(BaseModel):
     temperature: float = 0.3
     timeout: float = 120
     extra_body: dict = Field(default_factory=lambda: dict(LLM_PRESETS["dashscope"]["extra_body"]))
-    # 每百万 token 单价（元），第七阶段用于费用统计
+    # 每百万 token 单价（元），在「设置」里填；0 表示不算费用，只显示 token
     price_input_per_m: float = 0.0
     price_output_per_m: float = 0.0
 
@@ -54,6 +54,11 @@ class LLMSettings(BaseModel):
     def ready(self) -> bool:
         """填了 Key，或者用的是不要 Key 的本地模型。"""
         return bool(self.api_key) or self.provider == "ollama"
+
+    def billing(self) -> dict:
+        """生成时随任务保存的模型名和单价（GenerateOptions 的同名字段），统计费用用。本地模型不花钱。"""
+        return {"model": self.model, "local_model": self.provider == "ollama",
+                "price_input_per_m": self.price_input_per_m, "price_output_per_m": self.price_output_per_m}
 
     def apply_preset(self, name: str) -> None:
         preset = LLM_PRESETS[name]

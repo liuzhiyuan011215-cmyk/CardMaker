@@ -1,9 +1,10 @@
+import sqlite3
 from pathlib import Path
 
 from cardmaker.llm.client import Usage
 from cardmaker.pipeline.chunking import Chunk
 from cardmaker.pipeline.result import Card
-from cardmaker.storage import OK, PENDING, SKIPPED, TaskStore
+from cardmaker.storage import OK, PENDING, SCHEMA, SKIPPED, TaskStore
 
 
 def test_task_chunks_and_cards_roundtrip(tmp_path):
@@ -33,3 +34,20 @@ def test_task_chunks_and_cards_roundtrip(tmp_path):
 
 def test_default_store_lives_in_app_home(isolated_home):
     assert TaskStore().path == isolated_home / "cardmaker.db"
+
+
+def test_old_database_gets_check_usage_columns(tmp_path):
+    """旧版本的数据库没有记词典核对用量的列：打开时自动补上，原来的任务照常读。"""
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(SCHEMA)  # 旧版本的表结构
+    db.execute("INSERT INTO tasks (created_at, updated_at, input_path, book_title, template_id, params_json,"
+               " options_json, status) VALUES ('t', 't', 'a.pdf', '책', 'vocab_reading', '{}', '{}', 'done')")
+    db.commit()
+    db.close()
+    store = TaskStore(path)
+    assert store.get_task(1).check_usage == Usage() and store.get_task(1).total_tokens == 0
+    store.add_check_usage(1, Usage(100, 50, 0, 1))
+    store.add_check_usage(1, Usage(10, 5, 0, 1))  # 续传时又核对一次：累加
+    task = store.get_task(1)
+    assert task.check_usage == Usage(110, 55, 0, 2) and task.total_tokens == 165

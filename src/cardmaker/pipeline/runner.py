@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ..ingest.notes import load_notes
 from ..ingest.pdf import DocumentText, extract_pdf, read_text_file
-from ..llm.client import ChatModel, FatalLLMError
+from ..llm.client import ChatModel, FatalLLMError, Usage
 from ..progress import GENERATE, Cancelled, ProgressEvent, ProgressFn
 from ..storage import (CANCELLED, DONE, FAILED, INCOMPLETE, OK, PENDING, RUNNING, SKIPPED, ChunkRecord, TaskInfo,
                        TaskStore)
@@ -44,6 +44,11 @@ class GenerateOptions:
     notes_book: str | None = None  # 读书笔记里有多本书时，只处理这一本
     max_attempts: int = 4  # 每页最多调用几次：第一次 + 最多 3 次重试（指数退避）
     min_chars: int = 30  # 少于这么多字的页跳过
+    # 这次用的模型和单价（元 / 百万 token），随任务保存，统计费用用（见 LLMSettings.billing）
+    model: str = ""
+    local_model: bool = False
+    price_input_per_m: float = 0.0
+    price_output_per_m: float = 0.0
 
     @classmethod
     def from_dict(cls, data: dict) -> "GenerateOptions":
@@ -152,11 +157,13 @@ def make_result(task: TaskInfo, template: Template, records: list[ChunkRecord], 
                 dropped: Counter, stopped_early: bool) -> RunResult:
     result = RunResult(Path(task.input_path), task.template_id, template.name, task.params, task.book_title,
                        pages_selected=task.pages_selected, cards=cards, dropped=dropped, elapsed=task.elapsed,
-                       stopped_early=stopped_early, cancelled=task.status == CANCELLED, task_id=task.id)
+                       stopped_early=stopped_early, cancelled=task.status == CANCELLED, task_id=task.id,
+                       options=task.options, check_usage=task.check_usage)
     for rec in records:
         result.usage.add(rec.usage)
         result.chunks.append(ChunkOutcome(rec.chunk.page_label, rec.status, rec.attempts, rec.raw_items,
                                           rec.invalid, error=rec.error or rec.chunk.skip_reason, usage=rec.usage))
+    result.usage.add(task.check_usage)
     return result
 
 
@@ -255,8 +262,10 @@ def process_task(store: TaskStore, task_id: int, template: Template, llm: ChatMo
                 store.save_chunk(task_id, rec)
     cards, dropped, stopped_early = build_cards(template, task.book_title, records, options.max_cards)
     if dictionary is not None and cards and stop not in ("cancel", "fatal"):
+        check_usage = Usage()
         check_meanings(cards, template, dictionary, llm, task.params.get("meaning_language", "中文"),
-                       say, cancel)
+                       say, cancel, usage=check_usage)
+        store.add_check_usage(task_id, check_usage)
     store.save_cards(task_id, cards)
     unfinished = any(r.status in (PENDING, FAILED) for r in records)
     status = CANCELLED if stop == "cancel" else INCOMPLETE if unfinished else DONE

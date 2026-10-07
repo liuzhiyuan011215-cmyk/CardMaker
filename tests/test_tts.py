@@ -1,6 +1,7 @@
 """发音：用假的 HTTP 测试，不花钱、不联网。"""
 import subprocess
 import wave
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -66,6 +67,16 @@ def test_add_audio_fills_fields_and_tolerates_failures(tmp_path):
     assert cards[1].fields["Audio"] and cards[1].fields["ExampleAudio"] == ""  # 例句失败：只是没声音
     assert cards[2].fields["Audio"] == cards[0].fields["Audio"]  # 同一个词只合成一次
     assert len(errors) == 1 and len(media) == 3 and len(http.posts) == 4
+
+
+def test_add_audio_counts_new_and_cached_clips(tts, http):
+    """统计发音用量：新合成几条、多少字（按量计费），再导入一次全部走缓存，不再花钱。"""
+    cards = [Card({"Front": "확산되다", "Example": "감기가 확산되었다."}, {}, "1")]
+    first, again = Counter(), Counter()
+    add_audio(cards, tts, stats=first)
+    add_audio(cards, tts, stats=again)
+    assert (first["new"], first["new_chars"], first["cached"]) == (2, len("확산되다감기가 확산되었다."), 0)
+    assert (again["new"], again["cached"]) == (0, 2) and len(http.posts) == 2
 
 
 def test_missing_key():

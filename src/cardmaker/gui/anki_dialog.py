@@ -1,6 +1,7 @@
 """「导入 Anki」窗口：检测 Anki → 选牌组、方向、要不要发音 → 一键导入；连不上 Anki 时可以导出 .apkg 文件。"""
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from ..config import Settings
 from ..i18n import tr
 from ..pipeline.result import Card
 from ..templates.loader import Template
-from ..tts import CachedTTS, TTSError, add_audio, make_tts
+from ..tts import CachedTTS, DashScopeTTS, TTSError, add_audio, make_tts
 from .widgets import label
 from .worker import ProgressTask
 
@@ -23,6 +24,14 @@ ANKICONNECT_CODE = "2055492159"
 DIRECTIONS = [("外语→释义（看单词，口头说意思）", True, False),
               ("释义→外语（看意思，动笔写单词）", False, True),
               ("两个方向都要（推荐）", True, True)]
+
+
+def audio_summary(stats: Counter, free: bool) -> str:
+    """发音花了多少：新合成几条、多少字（百炼语音按量计费）；缓存里已有的不再花钱。"""
+    if free:
+        return f"🔊 已配上发音（本机生成，免费）：新合成 {stats['new']} 条，{stats['cached']} 条用了缓存"
+    return (f"🔊 已配上发音：新合成 {stats['new']} 条（共 {stats['new_chars']} 字，按量计费），"
+            f"{stats['cached']} 条用了缓存（不再花钱）")
 
 
 class AnkiImportDialog(QDialog):
@@ -38,6 +47,8 @@ class AnkiImportDialog(QDialog):
         self.connected = False
         self.report: ImportReport | None = None
         self.audio_errors: list[str] = []
+        self.audio_stats: Counter = Counter()
+        self.audio_free = True  # 系统语音、本地语音不花钱
         self._task: ProgressTask | None = None
 
         layout = QVBoxLayout(self)
@@ -152,7 +163,7 @@ class AnkiImportDialog(QDialog):
 
     def prepare_audio(self, report: Callable[[str], None]) -> list[Path]:
         """需要时给单词卡生成发音，返回音频文件。发音失败不影响导入，只是少了声音。"""
-        self.audio_errors = []
+        self.audio_errors, self.audio_stats = [], Counter()
         if not self.want_audio():
             return []
         try:
@@ -160,9 +171,10 @@ class AnkiImportDialog(QDialog):
         except TTSError as exc:
             self.audio_errors = [str(exc)]
             return []
+        self.audio_free = not isinstance(tts, DashScopeTTS)
         report("正在生成发音…")
         media, self.audio_errors = add_audio(self.cards, tts, progress=lambda done, total: report(
-            f"正在生成发音 {done}/{total}…"))
+            f"正在生成发音 {done}/{total}…"), stats=self.audio_stats)
         return media
 
     def start_import(self, background: bool = True) -> None:
@@ -185,7 +197,8 @@ class AnkiImportDialog(QDialog):
             card.anki_status = status
         text = f"✅ {report.summary()}。"
         if self.want_audio():
-            text += "\n🔊 已配上发音。" if not self.audio_errors else f"\n🔊 有 {len(self.audio_errors)} 条发音没生成：{self.audio_errors[0]}"
+            text += (f"\n{audio_summary(self.audio_stats, self.audio_free)}" if not self.audio_errors
+                     else f"\n🔊 有 {len(self.audio_errors)} 条发音没生成：{self.audio_errors[0]}")
         if report.errors:
             text += "\n失败原因：" + "；".join(report.errors[:3])
         self.status.setText(tr("导入完成。"))

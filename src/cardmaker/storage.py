@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS cards (
 
 PENDING, OK, FAILED, SKIPPED = "pending", "ok", "failed", "skipped"
 RUNNING, DONE, INCOMPLETE, CANCELLED = "running", "done", "incomplete", "cancelled"
+# 词典核对时调用模型的用量：不属于哪一页，记在任务上（后来加的列，旧数据库打开时自动补上）
+CHECK_COLUMNS = ("check_prompt_tokens", "check_completion_tokens", "check_cached_tokens", "check_calls")
 
 
 @dataclass
@@ -107,7 +109,12 @@ class TaskInfo:
     chunks_failed: int = 0
     chunks_pending: int = 0
     cards: int = 0
-    total_tokens: int = 0
+    usage: Usage = field(default_factory=Usage)  # 全部用量：各页生成 + 词典核对
+    check_usage: Usage = field(default_factory=Usage)  # 其中词典核对的部分
+
+    @property
+    def total_tokens(self) -> int:
+        return self.usage.total_tokens
 
     @property
     def unfinished(self) -> bool:
@@ -139,6 +146,10 @@ class TaskStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.executescript(SCHEMA)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
+            for name in CHECK_COLUMNS:  # 只加列，不动原有数据
+                if name not in columns:
+                    db.execute(f"ALTER TABLE tasks ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -175,20 +186,25 @@ class TaskStore:
           (SELECT COUNT(*) FROM chunks c WHERE c.task_id = t.id AND c.status = 'failed') AS chunks_failed,
           (SELECT COUNT(*) FROM chunks c WHERE c.task_id = t.id AND c.status = 'pending') AS chunks_pending,
           (SELECT COUNT(*) FROM cards k WHERE k.task_id = t.id) AS cards,
-          (SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM chunks c WHERE c.task_id = t.id)
-            AS total_tokens
+          (SELECT COALESCE(SUM(prompt_tokens), 0) FROM chunks c WHERE c.task_id = t.id) AS prompt_tokens,
+          (SELECT COALESCE(SUM(completion_tokens), 0) FROM chunks c WHERE c.task_id = t.id) AS completion_tokens,
+          (SELECT COALESCE(SUM(cached_tokens), 0) FROM chunks c WHERE c.task_id = t.id) AS cached_tokens,
+          (SELECT COALESCE(SUM(calls), 0) FROM chunks c WHERE c.task_id = t.id) AS calls
         FROM tasks t
     """
 
     @staticmethod
     def _task_from_row(row: sqlite3.Row) -> TaskInfo:
+        check = Usage(*(row[name] for name in CHECK_COLUMNS))
+        usage = Usage(row["prompt_tokens"], row["completion_tokens"], row["cached_tokens"], row["calls"])
+        usage.add(check)
         return TaskInfo(
             id=row["id"], created_at=row["created_at"], updated_at=row["updated_at"], input_path=row["input_path"],
             book_title=row["book_title"], template_id=row["template_id"], params=json.loads(row["params_json"]),
             options=json.loads(row["options_json"]), pages_selected=row["pages_selected"], status=row["status"],
             elapsed=row["elapsed"], error=row["error"], chunks_total=row["chunks_total"], chunks_ok=row["chunks_ok"],
             chunks_failed=row["chunks_failed"], chunks_pending=row["chunks_pending"], cards=row["cards"],
-            total_tokens=row["total_tokens"])
+            usage=usage, check_usage=check)
 
     def get_task(self, task_id: int) -> TaskInfo:
         with self._connect() as db:
@@ -204,6 +220,12 @@ class TaskStore:
 
     def unfinished_tasks(self) -> list[TaskInfo]:
         return [t for t in self.list_tasks() if t.unfinished]
+
+    def add_check_usage(self, task_id: int, usage: Usage) -> None:
+        """记下词典核对用掉的 token（续传时再核对一次，就再累加，和耗时一样）。"""
+        with self._connect() as db:
+            db.execute(f"UPDATE tasks SET {', '.join(f'{name} = {name} + ?' for name in CHECK_COLUMNS)} WHERE id = ?",
+                       (usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens, usage.calls, task_id))
 
     # ------------------------------------------------------------------ 分块
     def load_chunks(self, task_id: int) -> list[ChunkRecord]:

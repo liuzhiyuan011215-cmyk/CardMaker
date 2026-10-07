@@ -130,8 +130,12 @@ def test_generation_with_dictionary_saves_check_results(make_pdf, template):
                             dictionary=FakeDictionary())
     assert result.cards[0].data["meaning"] == "梨"
     assert any("词典核对释义：已按词典更正 1" in line for line in result.summary_lines())
+    # 核对时调用模型用的 token 也算进任务：生成 1 次 + 选义项 1 次，每次 150
+    assert result.check_usage.calls == 1 and result.usage.total_tokens == 300
+    assert "其中词典核对：150 token，调用 1 次" in result.summary_text()
     reloaded, _ = load_result(store, result.task_id)  # 存进数据库，历史记录里也看得到
     assert reloaded.cards[0].context["dict_check"]["status"] == "corrected"
+    assert reloaded.usage.total_tokens == store.get_task(result.task_id).total_tokens == 300
 
 
 def test_cross_language_meanings_are_judged_against_the_dictionary_sense(template):

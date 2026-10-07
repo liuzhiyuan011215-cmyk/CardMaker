@@ -3,7 +3,10 @@ import json
 
 import pytest
 
+from cardmaker.config import LLMSettings
+from cardmaker.llm.client import Usage
 from cardmaker.pipeline import runner
+from cardmaker.pipeline.result import cost_of, money
 from cardmaker.pipeline.runner import GenerateOptions, run_generation
 from cardmaker.templates.loader import load_template
 from conftest import FakeLLM
@@ -90,3 +93,33 @@ def test_summary_mentions_counts(make_pdf, template):
     result = run_generation(pdf, template, {"level": "TOPIK 4级"}, llm, SHORT_PAGES)
     text = result.summary_text()
     assert "卡片：2 张" in text and "单词 1" in text and "短语/句型 1" in text and "TOPIK 5级 2" in text
+
+
+def test_cost_and_average_per_card_in_summary(make_pdf, template):
+    pdf = make_pdf([f"{S1} {S2}"])
+    llm = FakeLLM([reply(item("확산되다", S1), item("방치되다", S2))])  # 一次调用：输入 100、输出 50 token
+    billing = {"model": "qwen-test", "price_input_per_m": 0.5, "price_output_per_m": 2}
+    result = run_generation(pdf, template, {}, llm, GenerateOptions(min_chars=5, **billing))
+    assert result.cost == pytest.approx((100 * 0.5 + 50 * 2) / 1e6)
+    text = result.summary_text()
+    assert "费用：约 0.00015 元（qwen-test；单价 输入 0.5 / 输出 2 元每百万 token）" in text
+    assert "平均每张卡：75 token" in text and "约 0.000075 元" in text
+
+    local = run_generation(pdf, template, {}, FakeLLM([reply(item("확산되다", S1))]),
+                           GenerateOptions(min_chars=5, model="qwen3.5:2b", local_model=True, price_input_per_m=0.5))
+    assert local.cost == 0 and "费用：0 元（本地模型 qwen3.5:2b）" in local.summary_text()
+    unpriced = run_generation(pdf, template, {}, FakeLLM([reply(item("확산되다", S1))]), SHORT_PAGES)
+    assert unpriced.cost is None and "费用" not in unpriced.summary_text()  # 没填单价：只显示 token
+
+
+def test_money_cost_and_billing():
+    usage = Usage(2_000_000, 100_000)
+    assert cost_of(usage, {"price_input_per_m": 0.3, "price_output_per_m": 3}) == pytest.approx(0.9)
+    assert cost_of(usage, {}) is None and cost_of(usage, {"local_model": True, "price_input_per_m": 1}) == 0
+    assert [money(v) for v in (0, 0.0023, 0.5, 1234.5)] == ["0", "0.0023", "0.5", "1,234.50"]
+
+    llm = LLMSettings(price_input_per_m=0.3)
+    options = GenerateOptions(**llm.billing())  # 字段名和生成选项一致，随任务保存
+    assert (options.model, options.local_model, options.price_input_per_m) == ("qwen3.8-flash", False, 0.3)
+    llm.apply_preset("ollama")
+    assert llm.billing()["local_model"] is True

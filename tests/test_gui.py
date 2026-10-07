@@ -1,6 +1,7 @@
 """界面测试：在后台（offscreen）运行，不弹窗口；大模型用假的，不花 token。"""
 import json
 import os
+from collections import Counter
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -222,7 +223,8 @@ def cancelled_task(tmp_path, make_pdf, template):
 def test_history_dialog_buttons(app, cancelled_task):
     store, task_id = cancelled_task
     dialog = HistoryDialog(None, store)
-    assert dialog.table.rowCount() == 1 and "可继续" in dialog.table.item(0, 6).text()
+    assert dialog.table.rowCount() == 1 and "可继续" in dialog.table.item(0, 7).text()
+    assert dialog.table.item(0, 6).text() == "—"  # 没填单价：不知道费用
     assert dialog.open_button.isEnabled() and dialog.resume_button.isEnabled()
     resumed = []
     dialog.resume_requested.connect(resumed.append)
@@ -274,3 +276,41 @@ def test_switching_purpose_does_not_leave_old_card_types(app):
         assert texts == [v.variant for v in groups[gid].variants]
         radios = [source.variant_layout.itemAt(i).widget() for i in range(source.variant_layout.count())]
         assert len([w for w in radios if w is not None]) == 1 + len(texts)  # 「卡片类型」标签 + 按钮
+
+
+# ---------------------------------------------------------------------- 费用统计
+def test_settings_dialog_saves_prices(app):
+    from cardmaker.config import load_settings
+    from cardmaker.gui.settings_dialog import SettingsDialog
+
+    dialog = SettingsDialog()
+    dialog.price_in.setValue(0.3)
+    dialog.price_out.setValue(3)
+    dialog.accept()
+    assert (load_settings().llm.price_input_per_m, load_settings().llm.price_output_per_m) == (0.3, 3)
+    dialog.platform.setCurrentIndex(dialog.platform.findData("ollama"))
+    assert not dialog.price_in.isEnabled()  # 本地模型不花钱，不用填
+
+
+def test_review_page_shows_cost_and_details(app, template):
+    from pathlib import Path
+
+    from cardmaker.gui.anki_dialog import audio_summary
+    from cardmaker.gui.review_page import ReviewPage
+    from cardmaker.llm.client import Usage
+    from cardmaker.pipeline.result import RunResult
+
+    result = RunResult(Path("书.pdf"), template.id, template.name, {}, "书", cards=[make_card(template)],
+                       usage=Usage(1000, 500, 0, 2), check_usage=Usage(200, 100, 0, 1), elapsed=12,
+                       options={"model": "qwen-test", "price_input_per_m": 0.3, "price_output_per_m": 3})
+    page = ReviewPage()
+    page.set_result(result, template)
+    assert "费用约 0.0018 元（平均每张 1,500 token，约 0.0018 元）" in page.summary.text()
+    details = page.stats_text()
+    assert "其中词典核对：300 token，调用 1 次" in details and "平均每张卡：1,500 token，12.0 秒" in details
+
+    result.options = {"model": "qwen3.5:2b", "local_model": True}
+    page.set_result(result, template)
+    assert "本地模型，不花钱" in page.summary.text()
+    assert "新合成 2 条（共 9 字，按量计费），3 条用了缓存" in audio_summary(
+        Counter(new=2, new_chars=9, cached=3), free=False)

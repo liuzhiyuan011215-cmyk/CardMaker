@@ -26,6 +26,7 @@ import unicodedata
 import wave
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -103,6 +104,11 @@ class CachedTTS:
     def cache_path(self, text: str, voice: str) -> Path:
         key = hashlib.sha1(f"{self.model}|{voice}|{self.fmt}|{text}".encode("utf-8")).hexdigest()[:16]
         return self.cache_dir / f"cardmaker_{key}.{self.fmt}"
+
+    def is_cached(self, text: str) -> bool:
+        text = plain_text(text)
+        path = self.cache_path(text, self.voice_for(text))
+        return path.exists() and path.stat().st_size > 0
 
     def audio_for(self, text: str) -> Path:
         """返回这段文字的音频文件；缓存里有就直接用。"""
@@ -223,14 +229,16 @@ def make_tts(settings: Settings) -> CachedTTS:
 
 
 def add_audio(cards: list, tts: CachedTTS, progress: Callable[[int, int], None] | None = None,
-              workers: int = 2) -> tuple[list[Path], list[str]]:
+              workers: int = 2, stats: Counter | None = None) -> tuple[list[Path], list[str]]:
     """给单词卡配发音：Audio 读单词，ExampleAudio 读例句。
 
     返回（用到的音频文件，失败说明）。音频文件要和卡片一起导入 Anki（媒体文件）。
+    stats：给了就记下新合成几条（new）、共多少字（new_chars），几条直接用了缓存（cached），统计费用用。
     """
     jobs = {plain_text(card.fields.get(field, "")) for card in cards for field in ("Front", "Example")}
     jobs.discard("")
     texts = sorted(jobs)
+    cached = {text for text in texts if tts.is_cached(text)} if stats is not None else set()
     audio: dict[str, Path] = {}
     errors: list[str] = []
 
@@ -249,6 +257,9 @@ def add_audio(cards: list, tts: CachedTTS, progress: Callable[[int, int], None] 
                 log.warning("发音生成失败：%s %s", text[:20], error)
             if progress:
                 progress(done, len(texts))
+    if stats is not None:
+        new = [text for text in audio if text not in cached]
+        stats.update(new=len(new), new_chars=sum(map(len, new)), cached=len(cached))
 
     for card in cards:
         word = audio.get(plain_text(card.fields.get("Front", "")))

@@ -6,11 +6,17 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderV
                                QTableWidgetItem, QVBoxLayout)
 
 from ..i18n import tr
+from ..pipeline.result import cost_of, money
 from ..storage import TaskInfo, TaskStore, status_text
 from ..templates.loader import list_templates
 from .widgets import label
 
-COLUMNS = ["时间", "书名", "用途", "进度", "卡片", "Token", "状态"]
+COLUMNS = ["时间", "书名", "用途", "进度", "卡片", "Token", "费用（元）", "状态"]
+
+
+def cost_cell(task: TaskInfo) -> str:
+    cost = cost_of(task.usage, task.options)
+    return "本地免费" if task.options.get("local_model") else "—" if cost is None else money(cost)
 
 
 class HistoryDialog(QDialog):
@@ -39,10 +45,10 @@ class HistoryDialog(QDialog):
         for row, task in enumerate(self.tasks):
             values = [task.created_at[5:16], task.book_title, names.get(task.template_id, task.template_id),
                       f"{task.chunks_ok}/{task.chunks_total} 页", str(task.cards), f"{task.total_tokens:,}",
-                      status_text(task)]
+                      cost_cell(task), status_text(task)]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(tr(value))
-                if col in (3, 4, 5):
+                if col in (3, 4, 5, 6):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, col, item)
         header = self.table.horizontalHeader()

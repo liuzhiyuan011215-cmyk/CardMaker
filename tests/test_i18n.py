@@ -64,3 +64,14 @@ def test_anki_cards_use_korean_labels_in_a_new_note_type(korean):
     html = "".join(t.front + t.back for t in vocab.templates)
     assert vocab.name == "CardMaker 단어" and "📖 원문" in html and "原文" not in html
     assert [t.name for t in vocab.templates] == ["외국어→뜻", "뜻→외국어"]
+
+
+def test_cost_lines_translate(korean):
+    assert tr("费用约 0.0018 元（平均每张 1,500 token，约 0.0018 元）") == \
+        "비용 약 0.0018위안 (카드 1장당 평균 토큰 1,500개, 약 0.0018위안)"
+    assert tr("页面：共选 3 页，成功 2，失败 0，跳过 0，未处理 1（可继续）") == \
+        "페이지: 3쪽 선택, 성공 2, 실패 0, 건너뜀 0, 미처리 1 (계속 가능)"
+    assert tr("卡片：5 张（单词 4、短语/句型 1）；丢弃：原文中找不到 2，重复 1") == \
+        "카드: 5장 (단어 4, 구/문형 1); 버림: 원문에 없음 2, 중복 1"
+    assert tr("《책》 · 模板「单词 · 阅读材料」 · 水平 TOPIK 4级").startswith("《책》 · 템플릿 「단어 · 읽기 자료」 · 수준")
+    assert tr("其中词典核对：300 token，调用 1 次") == "그중 사전 대조: 토큰 300개, 호출 1회"
