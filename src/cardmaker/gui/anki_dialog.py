@@ -144,6 +144,7 @@ class AnkiImportDialog(QDialog):
         self.deck.setCurrentText(current)
         self.status.set("已连接 Anki。牌组、笔记类型会自动创建；Anki 里已有的卡片会自动跳过。", "ok")
         self.import_button.setEnabled(bool(self.cards))
+        self.adjustSize()  # 提示折成两行时（例如英语）窗口跟着变高
 
     def on_unavailable(self, message: str) -> None:
         self.connected = False
@@ -216,6 +217,7 @@ class AnkiImportDialog(QDialog):
         self.status.set(f"导入失败：{message}", "error")
         self.import_button.setEnabled(self.connected)
         self.apkg_button.setEnabled(True)
+        self.adjustSize()
 
     def on_progress(self, message: str) -> None:
         self.status.setText(tr(message))

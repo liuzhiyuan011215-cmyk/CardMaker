@@ -221,7 +221,9 @@ class Centered(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        side = max(self.margin, (self.width() - self.max_width) // 2) if self.max_width else self.margin
+        # 内容本身比上限还宽（例如英语界面字更长）时按内容算：不然边距和滚动区会互相撑大，内容被挤到屏幕外
+        widest = max(self.max_width, self._layout.itemAt(0).widget().minimumSizeHint().width())
+        side = max(self.margin, (self.width() - widest) // 2) if self.max_width else self.margin
         if self._layout.contentsMargins().left() != side:
             self._layout.setContentsMargins(side, 0, side, 0)
 

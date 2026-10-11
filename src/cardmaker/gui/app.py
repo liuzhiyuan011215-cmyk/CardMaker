@@ -31,8 +31,8 @@ def create_app(argv: list[str] | None = None) -> QApplication:
 def main() -> int:
     setup_logging()
     app = create_app()
-    # 界面语言：设置里选的；没选过就跟随系统（韩语系统显示韩语）
-    system = "ko" if QLocale.system().language() == QLocale.Language.Korean else "zh"
+    # 界面语言：设置里选的；没选过就跟随系统（中文、韩语系统各用各的，其他系统用英语）
+    system = {QLocale.Language.Chinese: "zh", QLocale.Language.Korean: "ko"}.get(QLocale.system().language(), "en")
     set_language(load_settings().ui_language or system)
     window = MainWindow()
     window.show()

@@ -27,7 +27,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None, message: str = ""):
         super().__init__(parent)
         self.setWindowTitle(tr("设置"))
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(640)
         self.settings = load_settings()
         self._task: FunctionTask | None = None
 
@@ -70,6 +70,7 @@ class SettingsDialog(QDialog):
                                  ("输出", self.price_out, self.settings.llm.price_output_per_m)):
             box.setRange(0, 1000)
             box.setDecimals(3)
+            box.setMinimumWidth(100)  # 放得下「0.000」，不被挤成半个数字
             box.setValue(value)
             box.setToolTip(tr("在大模型平台的价格说明里查。填 0 就只显示 token 数，不算费用；本地模型不花钱，不用填。"))
             price_row.addWidget(label(name, "Hint"))

@@ -101,7 +101,7 @@ class Settings(BaseModel):
     concurrency: int = 5
     anki_url: str = "http://127.0.0.1:8765"
     default_deck: str = "CardMaker"
-    ui_language: str = ""  # 界面语言 zh / ko；空 = 跟随系统
+    ui_language: str = ""  # 界面语言 zh / ko / en；空 = 跟随系统
 
 
 def app_home() -> Path:

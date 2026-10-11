@@ -47,6 +47,9 @@ python3 -m venv .venv
 单词卡导入时可以自动配发音（阿里云百炼 `qwen-audio-3.1-tts-flash`，韩语、中文、英语按文字自动选音色，
 同样的内容只合成一次）。选择题的选项由程序打乱，正确答案不会总在同一个位置。
 
+界面有中文、韩语、英语三种，在「⚙ 设置」→「界面语言」里切换（重新打开后生效）；没选过就跟随系统语言。
+导入 Anki 的卡片标签也跟着界面语言走。
+
 配置（含 API Key）保存在 `~/Library/Application Support/CardMaker/config.yaml`，不在项目目录里，不会进 git。
 日志在同目录的 `logs/cardmaker.log`。
 
@@ -123,6 +126,7 @@ src/cardmaker/
   export/               结果保存与 HTML 预览
   anki/                 写入 Anki：AnkiConnect 客户端、三种笔记类型（单词 / 填空 / 选择题）、导入与 .apkg 导出
   tts.py                发音：百炼语音合成 + 本地缓存
+  i18n.py               界面翻译：中文原文当键，i18n_ko.py / i18n_en.py 是韩语、英语翻译表
   gui/                  桌面界面（PySide6）：四步向导、设置窗口、导入 Anki 窗口、后台任务
 tests/                  单元测试（含界面测试，在后台运行不弹窗口）
 scripts/                演示样本生成、macOS 启动器生成
@@ -140,5 +144,5 @@ samples/demo/           自己编写的演示样本（无版权问题）；sampl
 7. ✅ Token 与费用统计（含词典核对的 token、每张卡的平均用量、发音用量）+ 设置页填单价
    - ✅ 界面重做：磨砂玻璃外框 + shadcn/ui 风格的控件 + 统一的立体图标；卡片标签去掉 emoji，预览和 Anki 卡片一致
    - ✅ 大模型接口（MCP）：AI 助手可以直接提取文字、生成卡片、导入 Anki
-8. 界面多语言（中 / 韩 / 英）
+8. ✅ 界面多语言（中 / 韩 / 英）
 9. 打包成 macOS 应用

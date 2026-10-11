@@ -1,4 +1,4 @@
-"""界面语言：中文（默认）/ 한국어。
+"""界面语言：中文（默认）/ 한국어 / English。
 
 做法：界面上显示文字的地方都套一层 tr()，中文原文就是键。查不到翻译就原样显示，
 所以漏翻的地方顶多还是中文，不会出错。程序内部的值（例如释义语言「中文」）不翻，只翻显示。
@@ -9,32 +9,36 @@ from __future__ import annotations
 
 import re
 
+from .i18n_en import EN
 from .i18n_ko import KO
 
-LANGUAGES = [("中文", "zh"), ("한국어", "ko")]  # 设置窗口里的选项：(显示, 代码)
+LANGUAGES = [("中文", "zh"), ("한국어", "ko"), ("English", "en")]  # 设置窗口里的选项：(显示, 代码)
+TABLES = {"ko": KO, "en": EN}  # 中文不用表
 LANGUAGE = "zh"
 
 
 def set_language(language: str) -> None:
     global LANGUAGE
-    LANGUAGE = "ko" if language == "ko" else "zh"
+    LANGUAGE = language if language in TABLES else "zh"
 
 
 def _compile(key: str) -> re.Pattern:
     return re.compile("(.*?)".join(re.escape(part) for part in key.split("{}")), re.S)
 
 
-_PATTERNS = [(_compile(key), value) for key, value in KO.items() if "{}" in key]
+_PATTERNS = {code: [(_compile(key), value) for key, value in table.items() if "{}" in key]
+             for code, table in TABLES.items()}
 
 
 def tr(text):
     """中文 → 当前界面语言。不是文字（例如图标）或查不到时原样返回。"""
-    if LANGUAGE != "ko" or not isinstance(text, str) or not text.strip():
+    table = TABLES.get(LANGUAGE)
+    if table is None or not isinstance(text, str) or not text.strip():
         return text
-    found = KO.get(text)
+    found = table.get(text)
     if found is not None:
         return found
-    for pattern, value in _PATTERNS:
+    for pattern, value in _PATTERNS[LANGUAGE]:
         match = pattern.fullmatch(text)
         if match:
             return value.format(*(tr(part) for part in match.groups()))

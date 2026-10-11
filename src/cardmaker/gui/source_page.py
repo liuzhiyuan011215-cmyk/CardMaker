@@ -41,7 +41,7 @@ OCR_SECONDS_PER_PAGE = 3
 
 
 def form_label(text: str) -> QLabel:
-    """表单左侧的标签：统一宽度，几组选项上下对齐。"""
+    """表单左侧的标签；几组选项的宽度由 SourcePage._align_labels 统一。"""
     lbl = QLabel(tr(text))
     lbl.setMinimumWidth(110)
     return lbl
@@ -235,7 +235,8 @@ class SourcePage(QWidget):
         self.max_cards.setRange(0, 5000)
         self.max_cards.setSpecialValueText(tr("不限"))
         self.max_cards.setSuffix(tr(" 张"))
-        common.addRow(tr(form_label("最多生成")), self.max_cards)
+        self.max_label = form_label("最多生成")
+        common.addRow(self.max_label, self.max_cards)
         right_layout.addLayout(common)
         self.estimate = label("", "Hint", wrap=True)
         right_layout.addWidget(self.estimate)
@@ -317,7 +318,17 @@ class SourcePage(QWidget):
             widget.setToolTip(spec.description)
             self.param_form.addRow(form_label(spec.label), widget)
             self._getters[name] = getter
+        self._align_labels()
         self._update_pages()
+
+    def _align_labels(self) -> None:
+        """模板选项和下面的通用选项用同一个标签宽度，输入框上下对齐（英语的标签比中文长）。"""
+        role = QFormLayout.ItemRole.LabelRole
+        labels = [self.param_form.itemAt(row, role).widget() for row in range(self.param_form.rowCount())]
+        labels += [self.page_label, self.max_label]
+        width = max(lbl.sizeHint().width() for lbl in labels)
+        for lbl in labels:
+            lbl.setMinimumWidth(max(110, width))
 
     # ------------------------------------------------------------------ 资料
     def browse(self) -> None:

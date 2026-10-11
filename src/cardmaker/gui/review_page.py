@@ -427,7 +427,10 @@ class ReviewPage(QWidget):
         for col in range(1, self.model.columnCount()):
             extra = self.model.is_status_column(col) or self.model.is_dict_column(col)  # 「词典」「Anki」列不是字段
             wide = not extra and self.model.field_at(col) in WIDE_FIELDS
-            self.table.setColumnWidth(col, 260 if wide else 120)
+            width = 260 if wide else 120
+            if extra:  # 核对结果的字有长有短（英语「From dictionary」比中文长），按内容放宽
+                width = max(width, self.table.sizeHintForColumn(col), header.sectionSizeHint(col))
+            self.table.setColumnWidth(col, width)
         for col in range(self.model.columnCount()):  # 先恢复原来的列顺序（换了一批卡片）
             header.moveSection(header.visualIndex(col), col)
         if self.model.show_dict and "meaning" in self.model.columns:  # 「词典」列挪到「释义」右边，一眼就能对上

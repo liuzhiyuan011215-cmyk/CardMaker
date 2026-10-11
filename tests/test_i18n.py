@@ -1,4 +1,4 @@
-"""韩语界面：翻译表的句式、嵌套翻译，以及界面能用韩语打开。"""
+"""界面翻译（韩语、英语）：翻译表的句式、嵌套翻译，以及界面能用韩语、英语打开。"""
 import os
 import re
 
@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from cardmaker import i18n
 from cardmaker.i18n import tr
+from cardmaker.i18n_en import EN
 from cardmaker.i18n_ko import KO
 
 
@@ -20,6 +21,13 @@ def app():
 @pytest.fixture
 def korean():
     i18n.set_language("ko")
+    yield
+    i18n.set_language("zh")
+
+
+@pytest.fixture
+def english():
+    i18n.set_language("en")
     yield
     i18n.set_language("zh")
 
@@ -41,10 +49,17 @@ def test_exact_patterns_nested_and_multiline(korean):
 
 
 def test_every_pattern_has_matching_placeholders():
-    for key, value in KO.items():
-        n = key.count("{}")
-        assert len(re.findall(r"\{\d*\}", value)) == n, key
-        assert key.strip("{} "), key  # 不能只有占位符（会无限套娃）
+    for table in (KO, EN):
+        for key, value in table.items():
+            n = key.count("{}")
+            assert len(re.findall(r"\{\d*\}", value)) == n, key
+            assert key.strip("{} "), key  # 不能只有占位符（会无限套娃）
+
+
+def test_english_and_korean_tables_cover_the_same_texts():
+    assert set(EN) == set(KO)  # 加了韩语翻译就要加英语，反过来也一样
+    i18n.set_language("fr")
+    assert i18n.LANGUAGE == "zh"  # 不认识的语言回到中文
 
 
 def test_main_window_opens_in_korean(app, korean):
@@ -75,3 +90,32 @@ def test_cost_lines_translate(korean):
         "카드: 5장 (단어 4, 구/문형 1); 버림: 원문에 없음 2, 중복 1"
     assert tr("《책》 · 模板「单词 · 阅读材料」 · 水平 TOPIK 4级").startswith("《책》 · 템플릿 「단어 · 읽기 자료」 · 수준")
     assert tr("其中词典核对：300 token，调用 1 次") == "그중 사전 대조: 토큰 300개, 호출 1회"
+
+
+def test_english_patterns(english):
+    assert tr("已生成 3 张卡片") == "3 cards generated"
+    assert tr("已导入 3 张到「X」，2 张 Anki 里已经有了，已跳过") == "Imported 3 to “X”, 2 already in Anki, skipped"
+    assert tr("导入失败：连不上本地模型，请先打开 Ollama。") == "Import failed: Can’t reach the local model. Open Ollama first."
+    assert tr("卡片：5 张（单词 4、短语/句型 1）；丢弃：原文中找不到 2，重复 1") == \
+        "Cards: 5 (words 4, phrases/patterns 1); discarded: not in source 2, duplicates 1"
+    assert tr("经济学，第二版") == "经济学，第二版"
+
+
+def test_main_window_opens_in_english(app, english):
+    from PySide6.QtWidgets import QLabel, QPushButton
+
+    from cardmaker.gui.main_window import MainWindow
+    window = MainWindow()
+    texts = [w.text() for w in window.findChildren(QLabel) + window.findChildren(QPushButton)]
+    assert "Step 1: What cards do you want to make?" in texts and "Next" in texts
+    assert not [t for t in texts if re.search(r"[\u4e00-\u9fff]", t)]  # 第一页没有漏翻的中文
+    window.close()
+
+
+def test_anki_cards_use_english_labels(english):
+    from cardmaker.anki.exporter import ImportOptions, resolve_note_type
+
+    vocab = resolve_note_type("vocab", ImportOptions(deck="d"))
+    html = "".join(t.front + t.back for t in vocab.templates)
+    assert vocab.name == "CardMaker Vocabulary" and "Source" in html and "原文" not in html
+    assert [t.name for t in vocab.templates] == ["Word → Meaning", "Meaning → Word"]
