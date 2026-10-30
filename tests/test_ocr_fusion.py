@@ -1,6 +1,6 @@
 """真实加载 OCR 模型的端到端测试（较慢，首次运行会下载模型）。
 
-用 macOS 系统字体渲染一张中韩英混排的图片，检查融合识别的结果。
+用 macOS 系统字体渲染一张中韩英混排的图片，检查默认引擎（Qota-OCR）和分段双模型融合的识别结果。
 跳过方式：pytest -m "not slow"
 """
 from pathlib import Path
@@ -35,13 +35,24 @@ def render(lines) -> np.ndarray:
     return np.array(img)
 
 
+EXPECTED = ["확산되다 [自] 扩散，蔓延", "그는 매일 도서관에 간다.", "为了节省能源费用，关掉了电灯。",
+            "The committee postponed the decision."]
+
+
 def test_fusion_reads_mixed_korean_chinese_english():
+    from cardmaker.ingest.ocr.rapid_fusion import RapidFusionOCR
+
+    got = [line.text for line in RapidFusionOCR(["zh", "ko"]).recognize(render(LINES))]
+    # 韩语识别模型偶尔会丢掉句末的小句号（整行识别也一样，属于模型本身的特点），
+    # 原句校验用的是近似匹配，不影响出卡，所以这里忽略句末句号
+    assert [g.rstrip(".") for g in got] == [e.rstrip(".") for e in EXPECTED]
+
+
+def test_default_engine_is_qota_and_reads_mixed_lines():
     from cardmaker.ingest.ocr import create_ocr_engine
 
     engine = create_ocr_engine(["zh", "ko"])
-    got = [line.text for line in engine.recognize(render(LINES))]
-    expected = ["확산되다 [自] 扩散，蔓延", "그는 매일 도서관에 간다.", "为了节省能源费用，关掉了电灯。",
-                "The committee postponed the decision."]
-    # 韩语识别模型偶尔会丢掉句末的小句号（整行识别也一样，属于模型本身的特点），
-    # 原句校验用的是近似匹配，不影响出卡，所以这里忽略句末句号
-    assert [g.rstrip(".") for g in got] == [e.rstrip(".") for e in expected]
+    assert engine.name == "qota"  # 没退回融合：模型下载、加载都成功
+    # Qota 偶尔漏掉标点（例如「扩散，蔓延」的逗号），空格也和书上不一定一样；卡片用的是字，所以只比字
+    letters = lambda t: "".join(ch for ch in t if ch.isalnum())
+    assert [letters(line.text) for line in engine.recognize(render(LINES))] == [letters(e) for e in EXPECTED]

@@ -92,9 +92,10 @@ Claude、Cursor 这类支持 MCP 的 AI 助手接上以后，直接对它说「�
 
 ## 设计要点
 
-- **OCR 分段双模型融合**：RapidOCR 的每个识别模型只认一种文字，中韩混排的单词书用任何单个模型都会丢字。
-  程序先检测文字行，纯中文行直接整行识别；其他行按空白切成小段，每段同时交给中文和韩语模型，
-  取置信度高的结果，连续的汉字段再合并识别。详见 `src/cardmaker/ingest/ocr/rapid_fusion.py`。
+- **OCR**：RapidOCR 检测文字行，识别用 [Qota-OCR](https://huggingface.co/atonlee/Qota-OCR)（Apache-2.0），
+  一个模型就能读同一行里混排的韩文、中文、英文，见 `src/cardmaker/ingest/ocr/qota.py`。
+  模型下载不到时退回**分段双模型融合**：行按空白切成小段，每段同时交给中文和韩语模型，取置信度高的结果，
+  连续的汉字段再合并识别（`rapid_fusion.py`）。真扫描单词书上 Qota 的字错误率比融合低一半以上。
 - **模板 = 提示词 + 输出结构 + 字段映射**：每个模板一个 YAML 文件（`src/cardmaker/templates/builtin/`），
   输出结构在运行时生成 pydantic 模型做校验，用户选项可以增减要生成的内容。
 - **防编造**：模型给出的原句、书上例句必须能在原文中找到（允许 OCR 造成的细微差异），找不到的直接丢弃。
@@ -119,7 +120,7 @@ src/cardmaker/
   cli.py                命令行入口
   config.py / log.py    配置（含 API Key）与日志
   storage.py            SQLite 任务存储（断点续传、历史记录）
-  ingest/               导入：pdf.py（文字层 + OCR 兜底）、ocr/（OCR 接口与融合实现）、notes.py（读书笔记解析）
+  ingest/               导入：pdf.py（文字层 + OCR 兜底）、ocr/（OCR 接口、Qota 识别、融合实现）、notes.py（读书笔记解析）
   llm/                  OpenAI 兼容客户端、JSON 解析
   templates/            模板加载器 + builtin/*.yaml 内置模板
   pipeline/             分块、生成主流程、原文校验与去重、结果数据结构
