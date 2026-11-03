@@ -11,10 +11,13 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QGridLayout, QHBo
                                QTextBrowser, QVBoxLayout, QWidget)
 
 from ..config import load_settings
+from ..dictionary import make_dictionary
 from ..export.preview import write_outputs
 from ..i18n import tr
-from ..pipeline.meaning_check import CORRECTED, ERROR, LABELS as CHECK_LABELS, NOT_FOUND, UNMATCHED, check_status
+from ..llm.client import Usage, make_llm
+from ..pipeline.meaning_check import CORRECTED, ERROR, LABELS as CHECK_LABELS, NOT_FOUND, OCR_SUSPECT, UNCHECKED, UNMATCHED, check_status, pending_cards
 from ..pipeline.postprocess import CLOZE, add_mcq_options
+from ..pipeline.recheck import recheck_cards
 from ..pipeline.result import Card, RunResult, money
 from ..storage import TaskStore
 from ..templates.loader import Template
@@ -22,12 +25,13 @@ from . import icons
 from .anki_dialog import AnkiImportDialog
 from .theme import theme
 from .widgets import Dialog, button, label, segmented
+from .worker import FunctionTask
 
 HIDDEN_FIELDS = {"surface", "option_a", "option_b", "option_c", "option_d", "answer"}  # 内部用的字段，不在表格里显示
 READ_ONLY_FIELDS = {"kind"}
 KIND_TEXT = {"word": "单词", "phrase": "短语/句型"}
 STATUS_COLORS = {"已导入": "#16a34a", "已存在": "#98a2b3", "失败": "#dc2626"}
-CHECK_COLORS = {CORRECTED: "#b45309", UNMATCHED: "#dc2626", NOT_FOUND: "#b45309", ERROR: "#98a2b3"}
+CHECK_COLORS = {CORRECTED: "#b45309", OCR_SUSPECT: "#dc2626", UNMATCHED: "#dc2626", NOT_FOUND: "#b45309", UNCHECKED: "#b45309", ERROR: "#98a2b3"}
 
 
 def check_tooltip(check: dict) -> str:
@@ -278,6 +282,21 @@ class StatsDialog(Dialog):
         self.footer.right.addWidget(close)
 
 
+class CardProxy(QSortFilterProxyModel):
+    """搜索之外，还可以只看「待确认」的卡。"""
+    pending_only = False
+
+    def show_pending_only(self, on: bool) -> None:
+        self.pending_only = on
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, row, parent):
+        source = self.sourceModel()
+        if self.pending_only and not pending_cards([source.cards[row]]):
+            return False
+        return super().filterAcceptsRow(row, parent)
+
+
 class ReviewPage(QWidget):
     restart_requested = Signal()
 
@@ -317,7 +336,23 @@ class ReviewPage(QWidget):
         toolbar.addWidget(self.count_label)
         layout.addLayout(toolbar)
 
-        self.proxy = QSortFilterProxyModel(self)
+        # 词典没能确认的卡归成一类，不会进 Anki；少量的话用户看一眼就行，也可以让大模型再认一次
+        self.pending_bar = QWidget()
+        pending_row = QHBoxLayout(self.pending_bar)
+        pending_row.setContentsMargins(0, 0, 0, 0)
+        self.pending_label = label("", "Hint", wrap=True)
+        pending_row.addWidget(self.pending_label, 1)
+        self.manual_button = button("自己核对")
+        self.manual_button.setCheckable(True)
+        self.manual_button.toggled.connect(self._toggle_pending)
+        pending_row.addWidget(self.manual_button)
+        self.recheck_button = button("大模型重新识别")
+        self.recheck_button.clicked.connect(self._recheck)
+        pending_row.addWidget(self.recheck_button)
+        self.pending_bar.hide()
+        layout.addWidget(self.pending_bar)
+
+        self.proxy = CardProxy(self)
         self.proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.proxy.setFilterKeyColumn(-1)
         self.search.textChanged.connect(self.proxy.setFilterFixedString)
@@ -382,6 +417,7 @@ class ReviewPage(QWidget):
         self.model.rowsRemoved.connect(lambda *_: (self._update_count(), self._update_preview(),
                                                    self._save_timer.start()))
         self.proxy.setSourceModel(self.model)
+        self.manual_button.setChecked(False)
         self.search.clear()
 
         self._resize_columns()
@@ -443,6 +479,66 @@ class ReviewPage(QWidget):
             self.count_label.setText(tr(f"已勾选 {selected} / {len(self.model.cards)} 张"))
             self.export_button.setEnabled(selected > 0)
             self.anki_button.setEnabled(selected > 0)
+            pending = len(pending_cards(self.model.cards))
+            self.pending_bar.setVisible(pending > 0)
+            self.pending_label.setText(tr(f"有 {pending} 张没有核实，不会进 Anki。请选择处理方式："))
+            if not pending:
+                self.manual_button.setChecked(False)
+
+    def _toggle_pending(self, on: bool) -> None:
+        self.proxy.show_pending_only(on)
+        self.manual_button.setText(tr("显示全部" if on else "自己核对"))
+
+    def _recheck(self) -> None:
+        """只把待确认的卡所在的页交给大模型，再过一遍词典；通过的才勾选。"""
+        if not self.model or not self.result:
+            return
+        count = len(pending_cards(self.model.cards))
+        answer = QMessageBox.question(self, tr("大模型重新识别"),
+                                      tr(f"只重新识别这 {count} 张卡所在的页，会用掉一些 token。继续吗？"))
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        settings = load_settings()
+        dictionary = make_dictionary(settings)
+        if dictionary is None:
+            QMessageBox.information(self, tr("大模型重新识别"), tr("词典核对已关闭，没法确认结果。请先在「设置」里打开。"))
+            return
+        result, store, usage = self.result, self.store, Usage()
+        records = store.load_chunks(result.task_id) if store and result.task_id else []
+
+        def work():
+            return recheck_cards(result.cards, self.template, records, result.input_path, make_llm(settings.llm),
+                                 dictionary, result.params.get("meaning_language", "中文"), result.params, usage)
+
+        self.recheck_button.setEnabled(False)
+        self.table.setEnabled(False)
+        self.pending_label.setText(tr("正在重新识别…"))
+        self._recheck_task = FunctionTask(work)
+        self._recheck_task.finished.connect(lambda passed: self._recheck_done(passed, usage))
+        self._recheck_task.failed.connect(self._recheck_failed)
+        self._recheck_task.start()
+
+    def _recheck_done(self, passed: int, usage: Usage) -> None:
+        self.recheck_button.setEnabled(True)
+        self.table.setEnabled(True)
+        self.result.usage.add(usage)
+        self.result.check_usage.add(usage)
+        if self.store and self.result.task_id:
+            self.store.add_check_usage(self.result.task_id, usage)
+        self.model.refresh_status()
+        self.proxy.invalidateFilter()
+        self._update_count()
+        self._update_preview()
+        self.save()
+        left = len(pending_cards(self.model.cards))
+        QMessageBox.information(self, tr("大模型重新识别"),
+                                tr(f"{passed} 张通过词典核对，已勾选；还有 {left} 张需要自己核对。"))
+
+    def _recheck_failed(self, message: str) -> None:
+        self.recheck_button.setEnabled(True)
+        self.table.setEnabled(True)
+        self._update_count()
+        QMessageBox.warning(self, tr("大模型重新识别"), message)
 
     def _import_to_anki(self) -> None:
         cards = self.selected_cards()

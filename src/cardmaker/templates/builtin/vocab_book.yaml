@@ -2,7 +2,7 @@ id: vocab_book
 name: 单词 · 单词书/教材
 icon: 📘
 order: 2
-description: 整理单词书或教材词汇表（支持扫描件）。书上的释义和例句原样保留，没有例句的才让 AI 补一个。
+description: 整理单词书或教材词汇表（支持扫描件）。书上的例句原样保留，没有例句的用词典里的，词典也没有才让 AI 按释义造一个。
 note_type: vocab
 dedup_key: word
 tags: ["CardMaker::单词"]
@@ -23,14 +23,11 @@ user_prompt: |
 
   规则：
   1. 页面上的每个词条都要收录，不要挑选，也不要添加页面上没有的词条。页眉、标题、页码、说明文字不是词条。
-  2. word：词条本身（外语），与页面一致；OCR 明显认错的个别字符可以改正。
+  2. word：词条本身（外语），与页面一字不差；OCR 认错也不要改，后面会用词典检查。
   3. pos：把书上的词性标注整理成简写，如 [自] → 自、[名] → 名；书上没有标注时根据词义判断。
-  4. meaning：照录书上的释义，只整理格式，不改写、不增删意思；书上没有释义时，才用{{ meaning_language }}给出简洁释义。
+  4. meaning：照录书上的释义，只整理格式（去掉 @、③、□ 这类识别出来的杂符号），不改写、不增删意思；书上没有释义时，才用{{ meaning_language }}给出简洁释义。
   5. book_example：书上该词条的例句，原样照录，去掉"예)"、"例："之类的前缀；书上没有例句就留空 ""。
      book_example_translation：书上例句的翻译，原样照录；没有就留空。
-  6. 只有 book_example 为空时，才填写 ai_example（用 word 造一个自然、地道的例句）
-     和 ai_example_translation（{{ meaning_language }}翻译）；例句要是母语者日常会说的自然句子，
-     必须用 word 本身（可以变形，但不能换成被动、使动等别的词）。book_example 不为空时，这两项留空。
 
   {{ output_format }}
 
@@ -40,15 +37,16 @@ user_prompt: |
 output:
   list_key: items
   grounded: [word, book_example]  # 防编造：词条和书上例句必须能在页面中找到
-  dictionary: {word: word, meaning: meaning, sentence: book_example}  # 释义拿词典核对
+  dictionary: {word: word, meaning: meaning, sentence: book_example, keep_sentence: true, example: ai_example, example_translation: ai_example_translation}  # 释义拿词典核对，定下来之后才配例句
   fields:
     word: {label: "单词", required: true, description: "词条本身"}
     pos: {label: "词性", description: "词性简写"}
     meaning: {label: "释义", required: true, description: "书上的释义（照录）"}
     book_example: {label: "教材例句", description: "书上的例句，原样照录；没有则为空"}
     book_example_translation: {label: "教材例句翻译", description: "书上例句的翻译；没有则为空"}
-    ai_example: {label: "AI 例句", description: "仅当书上没有例句时，用 word 新造的例句"}
-    ai_example_translation: {label: "AI 例句翻译", description: "ai_example 的翻译"}
+    ocr_suspect: {label: "疑似错字", description: "可能被 OCR 认错的字（把一个字认成了另一个字），按前后文判断，写成「原样→应该是」，多处用分号隔开；符号、空格、页码、序号不算错字；不要直接改到其他字段里；没有就留空"}
+    ai_example: {label: "例句", later: true, description: "书上没有例句时，词典的例句或按释义新造的例句"}
+    ai_example_translation: {label: "例句翻译", later: true, description: "ai_example 的翻译"}
 
 card_fields:
   Front: "{{ word }}"
@@ -57,5 +55,5 @@ card_fields:
   SourceTranslation: ""
   Example: "{{ (book_example or ai_example) | highlight(word) }}"
   ExampleTranslation: "{{ book_example_translation if book_example else ai_example_translation }}"
-  ExampleLabel: "{% if book_example %}教材例句{% elif ai_example %}AI 例句{% endif %}"
+  ExampleLabel: "{% if book_example %}教材例句{% elif example_source == 'dict' %}词典例句{% elif ai_example %}AI 例句{% endif %}"
   Source: "{{ source }}"

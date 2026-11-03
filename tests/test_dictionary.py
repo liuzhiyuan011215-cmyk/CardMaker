@@ -4,7 +4,7 @@ import urllib.parse
 
 import pytest
 
-from cardmaker.dictionary import (WIKTIONARY_NAME, Dictionaries, DictError, KrdictClient, WiktionaryClient,
+from cardmaker.dictionary import (WIKTIONARY_NAME, Dictionaries, DictError, KrdictClient, WiktionaryClient, _wikt_example,
                                  lookup_key, parse_search)
 
 # 按开放 API 文档的结构写的返回示例：「배」有三个同形词
@@ -121,14 +121,161 @@ def test_korean_words_use_krdict_only_when_it_can_answer():
             self.name, self.korean_only = name, korean_only
 
         def covers(self, word, meaning_language="中文"):
-            return not self.korean_only or (any("가" <= ch <= "힣" for ch in word) and meaning_language != "韩语")
+            return not self.korean_only or (any("가" <= ch <= "힣" for ch in word) and meaning_language != "法语")
 
         def lookup(self, word, meaning_language="中文"):
             return self.name
 
     both = Dictionaries(Fake("krdict", True), Fake("wiktionary", False))
     assert both.lookup("배") == "krdict"
-    assert both.lookup("배", "韩语") == "wiktionary"  # 基础词典没有韩语→韩语
+    assert both.lookup("배", "韩语") == "krdict"  # 基础词典的释义本身就是韩语
+    assert both.lookup("배", "法语") == "wiktionary"  # 基础词典没有这种译文
     assert both.lookup("bank") == "wiktionary" and both.lookup("缓解") == "wiktionary"
     assert Dictionaries(None, Fake("wiktionary", False)).lookup("배") == "wiktionary"  # 没填 Key 也能查
     assert not Dictionaries(None, None).covers("배")
+
+
+def test_parse_view_keeps_only_full_sentences():
+    from cardmaker.dictionary import parse_view
+    xml = """<channel><item><word_info><pos_info><comm_pattern_info>
+      <sense_info><definition>뜻</definition>
+        <example_info><type>구</type><example>학교에 가다</example></example_info>
+        <example_info><type>문장</type><example>나는 학교에 다닌다.</example></example_info></sense_info>
+      <sense_info><definition>뜻2</definition>
+        <example_info><type>대화</type><example>가: 어디 가?</example></example_info></sense_info>
+    </comm_pattern_info></pos_info></word_info></item></channel>"""
+    senses = parse_view(xml)[0].senses
+    assert [(s.order, s.example) for s in senses] == [(1, "나는 학교에 다닌다."), (2, "")]
+
+
+def test_krdict_example_is_fetched_once_with_the_target_code(tmp_path):
+    from cardmaker.dictionary import KrdictClient
+    calls = []
+
+    def fetch(params, timeout, base=None):
+        calls.append(params)
+        return """<channel><item><sense_info><example_info><type>문장</type>
+                  <example>예문입니다.</example></example_info></sense_info></item></channel>"""
+
+    client = KrdictClient("k", tmp_path / "c.sqlite", fetch=fetch)
+    assert client.example("학교", "123", 1) == "예문입니다." == client.example("학교", "123", 1)
+    assert len(calls) == 1 and calls[0]["q"] == "123" and calls[0]["method"] == "target_code"
+
+
+def test_wiktionary_keeps_short_own_examples_not_quotations():
+    from cardmaker.dictionary import _wikt_example
+    assert _wikt_example({"examples": [{"text": "1611: long ago", "ref": "King James"}, {"text": "A mirror reflects light."}]}) == "A mirror reflects light."
+    assert _wikt_example({"examples": [{"text": "x" * 200}]}) == "" and _wikt_example({}) == ""
+
+
+def test_korean_meanings_use_krdict_definitions_without_translations(tmp_path):
+    fetch = FakeFetch()
+    client = KrdictClient("key", cache_path=tmp_path / "c.sqlite", fetch=fetch)
+    senses = [s for e in client.lookup("배", "韩语") for s in e.senses]
+    assert senses and all(s.native and s.definition and not s.trans_word and not s.trans_dfn for s in senses)
+    assert fetch.calls[0]["translated"] == "n" and "trans_lang" not in fetch.calls[0]
+    client.lookup("배", "韩语")
+    client.lookup("배", "中文")
+    assert len(fetch.calls) == 2  # 韩语和中文分开缓存，不会互相串
+    assert not any(s.native for e in client.lookup("배", "中文") for s in e.senses)
+
+
+def test_words_missing_from_krdict_fall_back_to_wiktionary():
+    class Fake:
+        def __init__(self, entries):
+            self.entries = entries
+
+        def covers(self, word, meaning_language="中文"):
+            return True
+
+        def lookup(self, word, meaning_language="中文"):
+            return self.entries
+
+    assert Dictionaries(Fake([]), Fake(["wiktionary"])).lookup("완화하다", "韩语") == ["wiktionary"]
+    assert Dictionaries(Fake(["krdict"]), Fake(["wiktionary"])).lookup("배") == ["krdict"]
+    assert Dictionaries(Fake([]), None).lookup("배") == []
+
+
+def test_wiktionary_examples_must_be_full_sentences():
+    fragments = [{"text": "alleviate his pain"}, {"text": "to intensify the heat or cold"}, {"text": "Curb your dog"}]
+    assert _wikt_example({"examples": fragments}) == ""
+    assert _wikt_example({"examples": [*fragments, {"text": "He felt a surge of excitement."}]}) == "He felt a surge of excitement."
+
+
+def test_misspelling_senses_do_not_count_as_real_words(tmp_path):
+    pages = {"recieve": {"word": "recieve", "pos": "verb", "senses": [{"glosses": ["Misspelling of receive."], "tags": ["alt-of", "misspelling"]}]},
+             "loose": [{"word": "loose", "pos": "adj", "senses": [{"glosses": ["Not fixed tightly."]}]},
+                       {"word": "loose", "pos": "verb", "senses": [{"glosses": ["Obsolete form of lose."], "tags": ["alt-of", "obsolete"]},
+                                                                  {"glosses": ["Misspelling of lose."], "tags": ["alt-of", "misspelling"]}]}]}
+
+    def fetch(url, timeout):
+        word = next(w for w in pages if url.endswith(f"/{w}.jsonl"))
+        rows = pages[word] if isinstance(pages[word], list) else [pages[word]]
+        return "\n".join(json.dumps(r) for r in rows)
+
+    client = WiktionaryClient(cache_path=tmp_path / "c.sqlite", fetch=fetch)
+    assert client.lookup("recieve") == []
+    assert [(e.pos, [s.definition for s in e.senses]) for e in client.lookup("loose")] == [("adj", ["Not fixed tightly."])]
+
+
+def test_network_timeouts_are_retried_but_http_errors_are_not(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    from cardmaker import dictionary
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"ok"
+
+    attempts = []
+
+    def flaky(request, timeout):
+        attempts.append(request)
+        if len(attempts) < 3:
+            raise TimeoutError("timed out")
+        return Reply()
+
+    monkeypatch.setattr(dictionary.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(urllib.request, "urlopen", flaky)
+    assert dictionary._fetch({"q": "배"}, 1) == "ok" and len(attempts) == 3
+
+    attempts.clear()
+
+    def down(request, timeout):
+        attempts.append(request)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", down)
+    with pytest.raises(DictError):
+        dictionary._fetch({"q": "배"}, 1)
+    assert len(attempts) == 3
+
+    attempts.clear()
+
+    def bad_key(request, timeout):
+        attempts.append(request)
+        raise urllib.error.HTTPError("u", 500, "err", None, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", bad_key)
+    with pytest.raises(DictError):
+        dictionary._fetch({"q": "배"}, 1)
+    assert len(attempts) == 1
+
+
+def test_dictionary_requests_are_paced(monkeypatch):
+    from cardmaker import dictionary
+
+    clock, slept = [100.0], []
+    monkeypatch.setattr(dictionary.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(dictionary.time, "sleep", lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s)))
+    monkeypatch.setattr(dictionary, "_last_request", 0.0)
+    dictionary._pace()
+    dictionary._pace()
+    assert slept == [dictionary.MIN_INTERVAL]  # 第一次不用等，紧接着的第二次要等

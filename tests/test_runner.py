@@ -41,13 +41,13 @@ def test_invalid_output_is_retried_with_feedback(make_pdf, template):
     llm = FakeLLM(["这不是 JSON", reply(item("확산되다", S1), item("지어내다", "원문에 없는 지어낸 문장입니다."))])
     result = run_generation(pdf, template, {"level": "TOPIK 4级"}, llm, SHORT_PAGES)
 
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 3  # 坏输出 + 重试 + 配例句
     retry_messages = llm.calls[1]
     assert retry_messages[-2]["role"] == "assistant" and "不符合要求" in retry_messages[-1]["content"]
     assert [c.fields["Front"] for c in result.cards] == ["확산되다"]
     assert result.dropped["原文中找不到"] == 1  # 编造的原句被丢弃
     assert result.chunks[0].status == "ok" and result.chunks[0].attempts == 2
-    assert result.usage.calls == 2 and result.usage.prompt_tokens == 200
+    assert result.usage.calls == 3 and result.usage.prompt_tokens == 300
 
 
 def test_failed_chunk_does_not_stop_the_task(make_pdf, template):
@@ -82,7 +82,7 @@ def test_max_cards_stops_early(make_pdf, template):
     result = run_generation(pdf, template, {}, llm, GenerateOptions(max_cards=1, min_chars=5))
     assert len(result.cards) == 1
     assert result.stopped_early
-    assert len(llm.calls) == 1  # 后面的页不再调用模型，省 token
+    assert len(llm.calls) == 2  # 第 1 页 + 配例句；后面的页不再调用模型，省 token
     assert [c.status for c in result.chunks] == ["ok", "skipped", "skipped"]
     assert "提前结束" in result.summary_text()
 
@@ -100,10 +100,10 @@ def test_cost_and_average_per_card_in_summary(make_pdf, template):
     llm = FakeLLM([reply(item("확산되다", S1), item("방치되다", S2))])  # 一次调用：输入 100、输出 50 token
     billing = {"model": "qwen-test", "price_input_per_m": 0.5, "price_output_per_m": 2}
     result = run_generation(pdf, template, {}, llm, GenerateOptions(min_chars=5, **billing))
-    assert result.cost == pytest.approx((100 * 0.5 + 50 * 2) / 1e6)
+    assert result.cost == pytest.approx(2 * (100 * 0.5 + 50 * 2) / 1e6)  # 提取一次 + 配例句一次
     text = result.summary_text()
-    assert "费用：约 0.00015 元（qwen-test；单价 输入 0.5 / 输出 2 元每百万 token）" in text
-    assert "平均每张卡：75 token" in text and "约 0.000075 元" in text
+    assert "费用：约 0.0003 元（qwen-test；单价 输入 0.5 / 输出 2 元每百万 token）" in text
+    assert "平均每张卡：150 token" in text and "约 0.00015 元" in text
 
     local = run_generation(pdf, template, {}, FakeLLM([reply(item("확산되다", S1))]),
                            GenerateOptions(min_chars=5, model="qwen3.5:2b", local_model=True, price_input_per_m=0.5))
@@ -123,3 +123,10 @@ def test_money_cost_and_billing():
     assert (options.model, options.local_model, options.price_input_per_m) == ("qwen3.8-flash", False, 0.3)
     llm.apply_preset("ollama")
     assert llm.billing()["local_model"] is True
+
+
+def test_max_per_page_is_enforced_even_if_the_model_ignores_it(make_pdf, template):
+    pdf = make_pdf([f"{S1} {S2}"])
+    llm = FakeLLM([reply(item("확산되다", S1), item("방치되다", S2))])
+    result = run_generation(pdf, template, {"max_per_page": 1}, llm, SHORT_PAGES)
+    assert [c.data["word"] for c in result.cards] == ["확산되다"]

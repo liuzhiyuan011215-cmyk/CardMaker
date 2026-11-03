@@ -32,7 +32,7 @@ def test_params_defaults_and_coercion(reading):
 def test_output_format_skips_disabled_fields(reading):
     on = reading.output_format(reading.resolve_params({}))
     off = reading.output_format(reading.resolve_params({"ai_example": False, "source_translation": False}))
-    assert '"example"' in on and '"example"' not in off
+    assert '"example"' not in on and '"example"' not in off  # 例句等释义定下来才配，提取时不要
     assert '"source_translation"' not in off
     assert "json" in on  # 百炼等平台的 JSON 模式要求提示词里出现 json
 

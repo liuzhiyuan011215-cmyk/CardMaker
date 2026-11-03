@@ -84,6 +84,26 @@ def test_review_page_opens_cards_with_dictionary_results(app, template):
     assert header.visualIndex(len(page.model.columns) + 1) == header.visualIndex(meaning) + 1  # 「词典」紧挨「释义」
 
 
+def test_unverified_cards_are_grouped_for_review(app, template):
+    from pathlib import Path
+
+    from cardmaker.gui.review_page import ReviewPage
+    from cardmaker.pipeline.result import RunResult
+
+    good, held = make_card(template), make_card(template)
+    good.context["dict_check"] = {"status": "verified"}
+    held.context["dict_check"] = {"status": "not_found"}
+    held.selected = False
+    page = ReviewPage()
+    page.set_result(RunResult(Path("书.pdf"), template.id, template.name, {}, "书", cards=[good, held]), template)
+    assert not page.pending_bar.isHidden() and "1" in page.pending_label.text()
+    page.manual_button.setChecked(True)
+    assert page.proxy.rowCount() == 1  # 只看待确认的卡
+    page.model.setData(page.model.index(1, 0), Qt.CheckState.Checked.value, Qt.ItemDataRole.CheckStateRole)
+    assert page.pending_bar.isHidden() and not page.manual_button.isChecked()  # 用户看过并勾选，就处理完了
+    assert page.proxy.rowCount() == 2
+
+
 def test_table_checkbox_and_delete(app, template):
     cards = [make_card(template), make_card(template)]
     model = CardTableModel(cards, template)

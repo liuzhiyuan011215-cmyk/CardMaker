@@ -49,6 +49,7 @@ class FieldSpec(BaseModel):
     min_items: int = 0  # list 类型至少几项，例如选择题至少 3 个干扰项
     enum: list[str] | None = None
     when: str | None = None  # 只有这个参数为真时才要求模型输出该字段（省 token）
+    later: bool = False  # 提取时不要模型输出，释义定下来之后才填（pipeline/meaning_check.settle_examples）
 
 
 class DictionarySpec(BaseModel):
@@ -56,7 +57,10 @@ class DictionarySpec(BaseModel):
     word: str = "word"
     meaning: str = "meaning"
     sentence: str = ""  # 判断多义词用的是哪个义项时要看原句
-    kind: str = ""  # 值为 phrase 的条目（短语、句型）不核对
+    kind: str = ""  # 值为 phrase 的条目（短语、句型）词典里查不到时不当作错字
+    example: str = ""  # 释义定下来之后才填的例句字段
+    example_translation: str = ""
+    keep_sentence: bool = False  # 原句就是卡片的例句（单词书）：有原句就不另配例句
 
 
 class OutputSpec(BaseModel):
@@ -245,6 +249,8 @@ class Template:
         lines = [f'只输出一个 json 对象，格式为 {{"{key}": [ {{...}}, ... ]}}；没有合适内容时输出 {{"{key}": []}}。',
                  "数组中每个元素包含以下字段："]
         for name, f in self.active_fields(params).items():
+            if f.later:
+                continue
             kind = f"取值为 {' / '.join(f.enum)}" if f.enum else {"str": "字符串", "int": "整数",
                                                                 "bool": "true/false", "list": "字符串数组"}[f.type]
             need = "必填" if f.required else "可为空"

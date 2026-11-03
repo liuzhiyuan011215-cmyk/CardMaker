@@ -56,8 +56,11 @@ user_prompt: |
   - surface：它在原文中实际出现的样子（如 방치되기），必须与原文一字不差。
   - pos：词性简写。韩语词用：名、代、数、形、副、冠、感、依存名词，动词及物写"他"、不及物写"自"；
     英语词用：n. / v. / adj. / adv. / prep.；短语写"短语"，句型写"句型"。
-  - meaning：结合原句语境的释义，用{{ meaning_language }}，简洁，最多两个义项，第一个义项必须是本句中的意思。
+  - meaning：结合原句语境的释义，必须用{{ meaning_language }}写（不管原文和这份说明是什么语言），简洁，最多两个义项，第一个义项必须是本句中的意思。
   - source_sentence：word 所在的完整原句，必须从【本页正文】中原样复制，不能改动任何字符。
+  {% if source_translation %}
+  - source_translation：把原句译成{{ meaning_language }}；原句本来就是{{ meaning_language }}时留空。
+  {% endif %}
 
   {{ output_format }}
 
@@ -70,7 +73,7 @@ user_prompt: |
 output:
   list_key: items
   grounded: [source_sentence]  # 防编造：原句必须能在本页原文中找到
-  dictionary: {word: word, meaning: meaning, sentence: source_sentence, kind: kind}  # 释义拿词典核对
+  dictionary: {word: word, meaning: meaning, sentence: source_sentence, kind: kind, example: example, example_translation: example_translation}  # 释义拿词典核对，定下来之后才配例句
   fields:
     word: {label: "单词", required: true, description: "词典形（原形）"}
     surface: {label: "原文形式", description: "在原文中出现的形式，与原文完全一致"}
@@ -80,8 +83,9 @@ output:
     difficulty: {label: "难度", description: "难度估计，如 TOPIK 5级、CEFR C1"}
     source_sentence: {label: "原句", required: true, description: "原句，从正文原样复制"}
     source_translation: {label: "原句翻译", when: source_translation, description: "原句的翻译"}
-    example: {label: "AI 例句", when: ai_example, description: "用 word 本身新造一个母语者日常会说的自然例句（原文语言）：可以变形，但不能换成被动、使动等别的词，也不要照抄原句"}
-    example_translation: {label: "例句翻译", when: ai_example, description: "新例句的翻译"}
+    ocr_suspect: {label: "疑似错字", description: "可能被 OCR 认错的字（把一个字认成了另一个字），按前后文判断，写成「原样→应该是」，多处用分号隔开；符号、空格、页码、序号不算错字；不要直接改到其他字段里；没有就留空"}
+    example: {label: "例句", when: ai_example, later: true, description: "词典的例句或按释义新造的例句"}
+    example_translation: {label: "例句翻译", when: ai_example, later: true, description: "例句的翻译"}
 
 # 卡片字段映射：左边是 Anki 笔记字段，右边是 Jinja2 表达式
 card_fields:
@@ -91,5 +95,5 @@ card_fields:
   SourceTranslation: "{{ source_translation }}"
   Example: "{{ example | highlight(word) }}"
   ExampleTranslation: "{{ example_translation }}"
-  ExampleLabel: "{% if example %}AI 例句{% endif %}"
+  ExampleLabel: "{% if example_source == 'dict' %}词典例句{% elif example %}AI 例句{% endif %}"
   Source: "{{ source }}"

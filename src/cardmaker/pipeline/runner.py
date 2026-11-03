@@ -25,7 +25,7 @@ from ..storage import (CANCELLED, DONE, FAILED, INCOMPLETE, OK, PENDING, RUNNING
                        TaskStore)
 from ..templates.loader import OutputError, Template, load_template
 from .chunking import Chunk, make_chunks
-from .meaning_check import check_meanings
+from .meaning_check import check_meanings, flag_ocr_suspects, settle_examples
 from .postprocess import add_mcq_options, check_grounding, dedup_key
 from .result import Card, ChunkOutcome, RunResult
 
@@ -109,7 +109,8 @@ def generate_chunk(llm: ChatModel, template: Template, chunk: Chunk, variables: 
             log.info("第 %s 页有 %d 条不合格，已丢弃：%s", chunk.page_label, len(errors), "；".join(errors))
         outcome.status, outcome.error = OK, ""
         outcome.raw_items, outcome.invalid = len(items) + len(errors), len(errors)
-        return outcome, items
+        limit = int(variables.get("max_per_page") or 0)  # 这条限制写在提示词里，模型不一定遵守
+        return outcome, items[:limit] if limit else items
     return outcome, []
 
 
@@ -262,10 +263,13 @@ def process_task(store: TaskStore, task_id: int, template: Template, llm: ChatMo
                 rec.status, rec.chunk.skip_reason = SKIPPED, "已达到最大卡片数"
                 store.save_chunk(task_id, rec)
     cards, dropped, stopped_early = build_cards(template, task.book_title, records, options.max_cards)
-    if dictionary is not None and cards and stop not in ("cancel", "fatal"):
+    if cards and stop not in ("cancel", "fatal"):
         check_usage = Usage()
-        check_meanings(cards, template, dictionary, llm, task.params.get("meaning_language", "中文"),
-                       say, cancel, usage=check_usage)
+        language = task.params.get("meaning_language", "中文")
+        if dictionary is not None:
+            check_meanings(cards, template, dictionary, llm, language, say, cancel, usage=check_usage)
+        settle_examples(cards, template, dictionary, llm, language, task.params, say, cancel, usage=check_usage)
+        flag_ocr_suspects(cards)
         store.add_check_usage(task_id, check_usage)
     store.save_cards(task_id, cards)
     unfinished = any(r.status in (PENDING, FAILED) for r in records)
