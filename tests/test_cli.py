@@ -1,4 +1,5 @@
 import pytest
+import sys
 
 from cardmaker import cli
 from cardmaker.config import load_settings, mask_key
@@ -20,7 +21,8 @@ def test_set_key_saves_to_isolated_config_and_never_prints_it(monkeypatch, capsy
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: secret)
     assert cli.main(["config", "set-key"]) == 0
     assert load_settings().llm.api_key == secret
-    assert (isolated_home / "config.yaml").stat().st_mode & 0o077 == 0  # 只有自己可读写
+    if sys.platform != "win32":
+        assert (isolated_home / "config.yaml").stat().st_mode & 0o077 == 0  # 只有自己可读写
 
     cli.main(["config", "show"])
     out = capsys.readouterr().out
