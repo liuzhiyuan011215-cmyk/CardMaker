@@ -94,7 +94,11 @@ def _write_assets(p: Palette) -> dict[str, str]:
 
     临时目录路径里没有空格，样式表的 url() 才认。
     """
-    folder = Path(tempfile.gettempdir()) / f"cardmaker-ui-{os.getuid()}"
+    if hasattr(os,"getuid"):
+        name= f"cardmaker-ui-{os.getuid()}"
+    else :
+        name="cardmaker-ui"
+    folder = Path(tempfile.gettempdir()) / name
     folder.mkdir(exist_ok=True)
     assets = {}
     for key, name, color in (("check", "checkmark", p.on_accent), ("down", "chevron_down", p.text2),
