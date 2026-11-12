@@ -75,12 +75,9 @@ def pick_senses(entries: list[Entry]) -> list[tuple[Entry, Sense]]:
 
 
 def matches(meaning: str, sense: Sense) -> bool:
-    """卡片上的释义和词典的这个义项对不对得上：和译词一致，或者出现在译文释义里。"""
-    mine = glosses(meaning)
-    if any(_same_gloss(a, b) for a in mine for b in glosses(sense.trans_word)):
-        return True
-    dfn = unicodedata.normalize("NFKC", sense.trans_dfn).casefold()
-    return any(len(a) >= 2 and a in dfn for a in mine)
+    """卡片上的释义和词典的这个义项对不对得上：要和译词一致。
+    不看译文解释：닫다 的解释里有「打开」二字（把打开的东西关上），会让反义词也算对上。"""
+    return any(_same_gloss(a, b) for a in glosses(meaning) for b in glosses(sense.trans_word))
 
 
 # ---------------------------------------------------------------------- 让模型在义项里选
@@ -386,7 +383,7 @@ def real_typos(suspect: str) -> str:
     kept = []
     for part in re.split(r"[;；]", suspect):
         old, _, new = part.partition("→")
-        if letters(old) and letters(old) != letters(new):
+        if letters(old) and letters(new) != letters(old) and (letters(new) or "→" not in part):
             kept.append(part.strip())
     return "；".join(kept)
 

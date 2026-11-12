@@ -64,7 +64,8 @@ def test_matches_glosses():
     pear = Sense(1, "", "梨", "梨树的果实。")
     assert matches("梨", pear) and matches("梨子", pear) and matches("梨（水果）", pear)
     assert matches("肚子；腹部", Sense(1, "", "肚子"))
-    assert matches("果实", pear)  # 出现在译文释义里
+    assert not matches("果实", pear)  # 只出现在解释里不算
+    assert not matches("打开", Sense(1, "", "关，盖，合", "把打开的东西关上。"))  # 真实发生过：反义词被当成对上了
     assert not matches("船", pear) and not matches("苹果", pear)
 
 
@@ -342,7 +343,7 @@ def test_ai_translated_meaning_cannot_be_confirmed_in_other_languages(template):
 
 
 def test_only_real_character_errors_count_as_ocr_typos():
-    for noise in ("@→[动]", "③→", "1→/", "]→□", "0017→0177", "올해연세가→올해 연세가", "市 场→市场", "@→; 1→/"):
+    for noise in ("@→[动]", "③→", "1→/", "]→□", "園→□", "0017→0177", "올해연세가→올해 연세가", "市 场→市场", "@→; 1→/"):
         assert real_typos(noise) == "", noise
     assert real_typos("빛기→빚기") == "빛기→빚기"
     assert real_typos("@→; 늦게일어나서→늦게 일어나서; 아晋니다→아픕니다") == "아晋니다→아픕니다"

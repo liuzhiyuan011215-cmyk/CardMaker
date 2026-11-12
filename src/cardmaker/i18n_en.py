@@ -539,6 +539,8 @@ EN: dict[str, str] = {
     "词典无此义 {}": "sense not in dictionary {}",
     "词典未收录 {}": "not in dictionary {}",
     "未核对 {}": "not checked {}",
+    "疑似 OCR 错字 {}": "possible OCR error {}",
+    "未经词典核对 {}": "not in dictionary check {}",
     "难度分布：{}": "Difficulty: {}",
     "Token：输入 {}（缓存命中 {}）/ 输出 {}，共 {}，调用 {} 次": "Tokens: input {} (cached {}) / output {}, total {}, {} calls",
     "其中词典核对：{} token，调用 {} 次": "Of which dictionary check: {} tokens, {} calls",
