@@ -30,7 +30,12 @@ SEARCH_URL = "https://krdict.korean.go.kr/api/search"
 VIEW_URL = "https://krdict.korean.go.kr/api/view"
 SOURCE_NAME = "한국어기초사전"
 WIKTIONARY_URL = "https://kaikki.org/dictionary/{lang}/meaning/{path}.jsonl"
-WIKTIONARY_NAME = "Wiktionary"
+WIKTIONARY_NAME = "Wiktionary" 
+KOWIKT_NAME = "한국어 위키낱말사전"
+KOWIKT_LANGS = {"en": "영어", "zh": "중국어"}
+ECDICT_NAME = "ECDICT"
+PANLEX_NAME = "PanLex"
+DIRECT_SOURCES = {SOURCE_NAME, ECDICT_NAME, KOWIKT_NAME, PANLEX_NAME}
 WIKTIONARY_LANGS = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean"}  # 单词的语言 → kaikki 的目录
 # 卡片的释义语言 → (接口的 trans_lang 编号, 返回结果里的语言名)
 TRANS_LANGS = {"中文": (11, "중국어"), "英语": (1, "영어"), "日语": (2, "일본어")}
@@ -158,12 +163,15 @@ def _fetch(params: dict, timeout: float, base: str = SEARCH_URL) -> str:
         raise DictError(f"词典服务出错（HTTP {exc.code}）") from None
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
-        raise DictError(f"连不上词典服务：{reason}") from None
+        raise DictError(f"连接不上韩国语基础词典（可能是被限流）,"
+                        f"请换个网络（如手机热点）后重试:{reason}") from None
+                        
 
 
 def lookup_key(word: str) -> str:
     """卡片上的单词 → 查词典用的词：去掉括号里的注释，「A/B」只查 A。"""
     word = re.sub(r"[（(\[【].*?[）)\]】]", "", word or "")
+    word = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])","",word)
     return word.split("/")[0].strip()
 
 

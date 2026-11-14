@@ -27,8 +27,9 @@ import threading
 import unicodedata
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 
-from ..dictionary import DictError, Entry, Sense, lookup_key
+from ..dictionary import DIRECT_SOURCES,DictError, Entry, Sense, lookup_key
 from ..llm.client import ChatModel, Usage, parse_json_object
 from ..progress import CHECK, ProgressEvent
 from ..tts import detect_language
@@ -47,20 +48,31 @@ MAX_SENSES = 15  # 义项特别多的词（例如「하다」、bank）只给这
 BATCH = 12  # 每次请模型选义项的单词数
 
 _BRACKETS = re.compile(r"[（(【\[].*?[）)】\]]")
-_SPLIT = re.compile(r"[，,；;、/／·\s]+")
+_SPLIT = re.compile(r"[，,；;、/／·]+")
+_LATIN = re.compile(r"[a-z]{2}")
+_CJK = re.compile(r"[\u3131-\u318e\u4e00-\u9fff\uac00-\ud7a3]")
+_ENGLISH_LEAD = re.compile(r"^(?:to|a|an|the|be)\s+")
 _STRIP = "。.…～~-—「」“”\"'：:"
 
 
 def glosses(text: str) -> list[str]:
     """释义 → 一个个译词：去掉括号里的补充说明，按逗号、分号、斜杠拆开，统一全角半角和大小写。"""
     text = unicodedata.normalize("NFKC", _BRACKETS.sub(" ", text or "")).casefold()
-    return [p for p in (part.strip(_STRIP) for part in _SPLIT.split(text)) if p]
+    out = []
+    for part in _SPLIT.split(text):
+        english = _LATIN.search(part) and not _CJK.search(part)
+        for p in ([_ENGLISH_LEAD.sub("",part.strip())] if english else part.split()):
+            if p.strip(_STRIP):
+                out.append(p.strip(_STRIP))
+    return out
 
 
 def _same_gloss(a: str, b: str) -> bool:
     if a == b:
         return True
     short, long = sorted((a, b), key=len)
+    if _LATIN.search(short):
+        return len(short) >= 3 and re.search(rf"\b{re.escape(short)}\b",long) is not None 
     if len(short) >= 2:
         return short in long
     # 单字只和很短的词比：「梨」≈「梨子」，「船」≈「船只」
@@ -173,12 +185,29 @@ def check_meanings(cards: list[Card], template, dictionary, llm: ChatModel | Non
         if not senses:
             if spec.kind and card.data.get(spec.kind) == "phrase":  # 短语、句型词典里常常没有，不一定是错字
                 stats[_hold(card, UNCHECKED, note="词典里查不到这个短语，意思没有核对，已取消勾选，请确认")] += 1
+            elif getattr(dictionary,"known",lambda w: False)(word): #单词没认错，只是词典没收录
+                stats[_hold(card, UNCHECKED,
+                note="词典没有这个词的释义，单词本身没有认错已经取消勾选，请确认释义")] += 1
             else:
                 stats[_hold(card, NOT_FOUND, word=lookup_key(word), note="词典里没有这个词，可能是 OCR 认错了，已取消勾选，请核对")] += 1
-            continue
+            continue 
+        if meaning_language == "英语":
+            senses = [(e,s if s.trans_word else replace(s,trans_word=s.definition)) for e,s in senses]
         hits = [i for i, (_, s) in enumerate(senses) if matches(meaning, s)]
         sentence = str(card.data.get(spec.sentence) or "") if spec.sentence else ""
-        if hits and (len(senses) == 1 or not sentence):  # 没有原句就没什么可选的：释义是词典里的真实义项就算对
+        first = next((x for x in senses if x[1].trans_word),None)
+        if senses[0][0].source in DIRECT_SOURCES or meaning_language == "英语": 
+            if hits:
+                _mark(card, VERIFIED, **_found(*senses[hits[0]]))
+                stats[VERIFIED] += 1
+            elif first is None:
+                stats[_hold(card, UNCHECKED, note="词典里没有这种语言的释义，已取消勾选，请确认释义")] += 1
+            else:
+                card.data[spec.meaning] = first[1].trans_word
+                card.fields = template.render_card_fields(card.data, card.context)
+                stats[_mark(card, CORRECTED, **_found(*first), original=meaning,
+                            note="释义和词典对不上，已换成词典的第一个义项")] += 1
+        elif hits and (len(senses) == 1 or not sentence):
             _mark(card, VERIFIED, **_found(*senses[hits[0]]))
             stats[VERIFIED] += 1
         else:
