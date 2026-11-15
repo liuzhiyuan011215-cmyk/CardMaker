@@ -322,7 +322,46 @@ class WiktionaryClient:
 
     def example(self, word: str, target_code: str, order: int, meaning_language: str = "中文") -> str:
         return ""  # 例句已经在 Sense.example 里，不用另查
+class KoWiktionaryClient:
+    """韩语版维基百科：英文、中文单词——韩语释义（英韩。中韩）。离线 SQLite."""
+    def __init__(self,path:Path | None = None):
+        path = path or app_home() / "kowiktionary.sqlite"
+        if not path.exists():
+            raise DictError(f"没有找到韩语维基词典:{path}")
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(f"file:{path}?mode=ro",uri=True,check_same_thread=False)
+        self.requests = 0
+    def covers(self,word:str,meaning_language:str = "中文")-> bool:
+        return meaning_language == OWN_LANGUAGE and detect_language(lookup_key(word)) in KOWIKT_LANGS
 
+    def lookup(self , word:str,meaning_language: str = OWN_LANGUAGE)-> list[Entry]:
+        word = lookup_key(word)
+        return self._entries(detect_language(word),word) if word else []
+
+    def _entries(self, lang : str,word:str,follow:bool = True) -> list[Entry]:
+        with self._lock:
+            rows = self._db.execute("SELECT json FROM kowikt WHERE lang = ? AND word = ?",(lang,word)).fetchall()
+        entries = []
+        for row in rows:
+            item = json.loads(row[0])
+            glossed = []
+            for s in item.get("senses") or []:
+                if s.get("glosses"):
+                    glossed.append(s)
+            if not glossed:
+                if follow and item.get("redirects"):
+                    entries += self._entries(lang,item["redirects"][0],follow=False)
+                continue
+            senses = []
+            for n,sense in enumerate(glossed,1):
+                gloss = "; ".join(sense["glosses"]).strip().rstrip(".")
+                senses.append(Sense(n,gloss,trans_word=gloss))
+            entries.append(Entry("", item.get("word") or word, 0, item.get("pos") or "",senses,
+                                     f"https://ko.wiktionary.org/wiki/{urllib.parse.quote(word)}", WIKTIONARY_NAME))
+        return entries
+
+    def example(self,word:str,target_code:str,order:int,meaning_language:str = "中文") -> str:
+        return""
 
 class Dictionaries:
     """按单词的语言选词典：韩语单词有 Key 时查《韩国语基础词典》（有中英日译词，最准），其余都查维基词典。"""
