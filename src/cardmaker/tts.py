@@ -19,6 +19,7 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -164,19 +165,37 @@ class DashScopeTTS(CachedTTS):
 
 class SystemTTS(CachedTTS):
     """系统自带语音（macOS 的 say 命令）：免费、不联网、不用 Key，音质比百炼差一点。"""
-    VOICES = {"ko": "Yuna", "zh": "Tingting", "ja": "Kyoko", "en": "Samantha"}  # macOS 自带的音色
+    VOICES = {"ko": "Yuna", "zh": "Tingting",  "en": "Samantha"}  # macOS 自带的音色
+    WIN_VOICES = {"ko": "ko-KR","zh": "zh-CN","en":"en-US"}
 
     def __init__(self, cache_dir: Path | None = None, run=subprocess.run):
-        if not shutil.which("say"):  # ponytail: 只支持 macOS；出 Windows 版时改用系统的 SAPI 语音
-            raise TTSError("这台电脑没有系统语音（目前只支持 macOS），请在「设置」里改用百炼语音")
-        super().__init__("say", self.VOICES, "m4a", cache_dir)
+        if sys.platform == "win32":
+            super().__init__("sapi",self.WIN_VOICES,"wav", cache_dir)
+        elif shutil.which("say"):
+            super().__init__("say",self.VOICES,"m4a",cache_dir)
+        else:
+            raise TTSError("这台电脑没有系统语音，请再设置中更改其他ai语音")
         self._run = run
 
     def _synthesize(self, text: str, voice: str) -> bytes:
         with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "audio.m4a"
-            done = self._run(["say", "-v", voice, "--data-format=aac", "-o", str(out), "--", text],
-                             capture_output=True, text=True, timeout=60)
+            if sys.platform == "win32":
+                out = Path(tmp) / "audio.wav"
+                txt = Path(tmp) / "text.txt"
+                txt.write_text(text,encoding="utf-8")
+                ps = (
+                    "Add-Type -AssemblyName System.Speech; "
+                        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                        f"$s.SelectVoiceByHints(0, 0, 0, [cultureinfo]'{voice}'); "
+                        f"$s.SetOutputToWaveFile('{out}'); "
+                        f"$s.Speak((Get-Content -Raw -Encoding UTF8 '{txt}')); "
+                        "$s.Dispose()"
+                )
+                cmd = ["powershell","-NoProfile","-Command",ps]
+            else:
+                out = Path(tmp) / "audio.m4a"
+                cmd = ["say","-v",voice,"--data-format=aac","-o",str(out),"--",text]
+            done = self._run(cmd,capture_output=True,text=True,timeout=60)
             if done.returncode or not out.exists():
                 raise TTSError(f"系统语音合成失败：{(done.stderr or '').strip()[:200]}")
             return out.read_bytes()
@@ -190,6 +209,8 @@ class QwenLocalTTS(CachedTTS):
 
     def __init__(self, cache_dir: Path | None = None, load=None):
         if load is None:
+            if sys.platform == "win32":
+                raise TTSError("本地Qwen语音只支持Apple芯片，Windows请用系统自带或者百炼ai模型")
             if importlib.util.find_spec("mlx_audio") is None:
                 raise TTSError("本地语音还没安装（需要 Apple 芯片的 Mac 和 mlx-audio），请在「设置」里改用别的发音方式")
             from mlx_audio.tts.utils import load
