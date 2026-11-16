@@ -419,7 +419,41 @@ class EcdictClient:
     
     def example(self ,word:str, target_code:str,order:int,meaning_language:str = "中文") -> str:
         return""
-            
+class PanlexClient:
+    """Panlex英韩，中韩译词（CC BY-NC-SA 4.0）:韩语维基没有释义兜底。"""
+    def __init__(self,path:Path | None = None):
+        if path is None:
+            path = app_home() / "panlex_ko.sqlite"
+        if not path.exists():
+            raise DictError(f"没有找到英韩词典文件：{path}")
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(f"file:{path}?mode=ro",uri=True,check_same_thread=False)
+        self.requests = 0
+        
+    def lookup(self,word: str,meaning_language:str = OWN_LANGUAGE)->list[Entry]:
+        key = lookup_key(word).lower()
+        with self._lock:
+            cur = self._db.execute(
+                "SELECT kor FROM panlex_pairs WHERE key = ? ORDER BY shared_meanings DESC, kor_meanings DESC, kor",
+                (key,),
+            )  
+            rows = cur.fetchall()
+        senses = []
+        n=1
+        for row in rows:
+            kor = row[0]
+            if not re.fullmatch(r"[가-힣 ]+",kor):# PanLex 里混有单字汉字音（휴、연）和 $1$这类杂质，只留两个音节以上的纯韩文
+                continue
+            if len(kor.replace(" ","")) <2:
+                continue
+            senses.append(Sense(n,kor,trans_word=kor))
+            n = n+1
+        if not senses:
+            return []
+        return[Entry("",lookup_key(word),0,"",senses,source=PANLEX_NAME)]
+    
+    def example(self,word:str,target_code:str,order:int,meaning_language:str = "中文")-> str:
+        return ""
 
 class Dictionaries:
     """按单词的语言选词典：韩语单词有 Key 时查《韩国语基础词典》（有中英日译词，最准），其余都查维基词典。"""
