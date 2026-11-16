@@ -357,11 +357,69 @@ class KoWiktionaryClient:
                 gloss = "; ".join(sense["glosses"]).strip().rstrip(".")
                 senses.append(Sense(n,gloss,trans_word=gloss))
             entries.append(Entry("", item.get("word") or word, 0, item.get("pos") or "",senses,
-                                     f"https://ko.wiktionary.org/wiki/{urllib.parse.quote(word)}", WIKTIONARY_NAME))
+                                     f"https://ko.wiktionary.org/wiki/{urllib.parse.quote(word)}", KOWIKT_NAME))
         return entries
 
     def example(self,word:str,target_code:str,order:int,meaning_language:str = "中文") -> str:
+        return ""
+class EcdictClient:
+    """ECDICT英韩词典：英语单词->中文译词，同时用来检查英语拼音。"""
+    def __init__(self,path:Path | None = None):
+        if path is None:
+            path = app_home() / "ecdict.sqlite"
+        if not path.exists():
+            raise DictError(f"没有找到英韩词典文件:{path}")
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(f"file:{path}?mode=ro",uri=True,check_same_thread=False)
+        self.requests = 0
+    def _lines(self,word:str) -> list[str] :
+        word = lookup_key(word)
+        with self._lock:
+            cur = self._db.execute(
+                "SELECT translation FROM ecdict WHERE key = ? ORDER BY word = ? DESC LIMIT 1",
+                (word.lower(),word),
+            )
+            row = cur.fetchone()
+        if row is None or not row[0]:
+            return []
+        lines = []
+        for line in row[0].split("\\n"):
+            line = line.strip()
+            if line =="":
+                continue
+            if line.startswith("["):
+                continue
+            lines.append(line)
+        return lines
+    def known(self , word: str)-> bool:
+        if self._lines(word):
+            return True
+        return False
+    
+    def covers(self,word:str,meaning_language:str = "中文") ->bool:
+        if meaning_language !="中文":
+            return False
+        if detect_language(lookup_key(word)) !="en":
+            return False
+        return True
+    def lookup(self,word:str,meaning_language:str = "中文")->list[Entry]:
+        senses = []
+        n =1
+        for line in self._lines(word):
+            if re.match(r"[a-z]+\. ",line):
+                parts = line.split(". ",1)
+                gloss = parts[1]
+            else:
+                gloss=line
+            senses.append(Sense(n,line,trans_word=gloss))
+            n = n+1
+        if not senses:
+            return []
+        return [Entry("",lookup_key(word),0,"",senses,source=ECDICT_NAME)]
+    
+    def example(self ,word:str, target_code:str,order:int,meaning_language:str = "中文") -> str:
         return""
+            
 
 class Dictionaries:
     """按单词的语言选词典：韩语单词有 Key 时查《韩国语基础词典》（有中英日译词，最准），其余都查维基词典。"""
