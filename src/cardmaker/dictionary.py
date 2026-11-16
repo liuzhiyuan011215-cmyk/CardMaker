@@ -458,13 +458,34 @@ class PanlexClient:
 class Dictionaries:
     """按单词的语言选词典：韩语单词有 Key 时查《韩国语基础词典》（有中英日译词，最准），其余都查维基词典。"""
 
-    def __init__(self, krdict: KrdictClient | None = None, wiktionary: WiktionaryClient | None = None):
-        self.krdict, self.wiktionary = krdict, wiktionary
+    def __init__(
+        self,
+        krdict:KrdictClient | None = None,
+        wiktionary:WiktionaryClient | None = None,
+        ecdict: EcdictClient | None = None,
+        kowiktionary:KoWiktionaryClient | None = None,
+        panlex: PanlexClient | None =None,
+    ):
+        self.krdict = krdict
+        self.wiktionary = wiktionary
+        self.ecdict = ecdict
+        self.kowiktionary = kowiktionary
+        self.panlex = panlex
+        
 
     def _pick(self, word: str, meaning_language: str):
         if self.krdict and self.krdict.covers(word, meaning_language):
             return self.krdict
+        if self.ecdict and self.ecdict.covers(word, meaning_language):
+            return self.ecdict
+        if self.kowiktionary and self.kowiktionary.covers(word,meaning_language):
+            return self.kowiktionary
         return self.wiktionary
+    
+    def known(self,word:str) -> bool:
+        if self.ecdict and self.ecdict.known(word):
+            return True
+        return False
 
     def covers(self, word: str, meaning_language: str = "中文") -> bool:
         client = self._pick(word, meaning_language)
@@ -473,9 +494,11 @@ class Dictionaries:
     def lookup(self, word: str, meaning_language: str = "中文") -> list[Entry]:
         client = self._pick(word, meaning_language)
         entries = client.lookup(word, meaning_language)
-        # 基础词典只收常用词，查不到再问维基词典，免得正确的高级词汇被当成错字
         if not entries and client is self.krdict and self.wiktionary:
             return self.wiktionary.lookup(word, meaning_language)
+        if not entries and client is self.kowiktionary and self.panlex:
+            return self.panlex.lookup(word, meaning_language)
+        # 基础词典只收常用词，查不到再问维基词典，免得正确的高级词汇被当成错字
         return entries
 
     def example(self, word: str, target_code: str, order: int, meaning_language: str = "中文") -> str:
@@ -487,4 +510,20 @@ def make_dictionary(settings) -> Dictionaries | None:
     conf = settings.dictionary
     if not conf.enabled:
         return None
-    return Dictionaries(KrdictClient(conf.krdict_key) if conf.krdict_key else None, WiktionaryClient())
+    if conf.krdict_key:
+        krdict = KrdictClient(conf.krdict_key)
+    else:
+        krdict = None
+    if (app_home() / "ecdict.sqlite").exists():
+        ecdict = EcdictClient()
+    else:
+        ecdict = None
+    if (app_home() / "kowiktionary.sqlite").exists():
+        kowiktionary = KoWiktionaryClient()
+    else:
+        kowiktionary = None
+    if (app_home() / "panlex_ko.sqlite").exists():
+        panlex = PanlexClient()
+    else:
+        panlex = None
+    return Dictionaries(krdict,WiktionaryClient(),ecdict,kowiktionary,panlex)
