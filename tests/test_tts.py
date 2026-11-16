@@ -1,5 +1,6 @@
 """发音：用假的 HTTP 测试，不花钱、不联网。"""
 import subprocess
+import sys
 import wave
 from collections import Counter
 from pathlib import Path
@@ -101,15 +102,29 @@ def test_rate_limit_is_retried(tmp_path, monkeypatch):
 def test_system_voice_is_free_and_cached(tmp_path):
     calls = []
 
-    def fake_say(args, **kwargs):
-        calls.append(args)
-        Path(args[args.index("-o") + 1]).write_bytes(b"m4a-audio")
-        return subprocess.CompletedProcess(args, 0, "", "")
+    if sys.platform == "win32":
+        def fake_win(args, **kwargs):
+            calls.append(args)
+            for part in args[-1].split("'"):
+                if part.endswith(".wav"):
+                    Path(part).write_bytes(b"wav-audio")
+            return subprocess.CompletedProcess(args, 0, "", "")
 
-    tts = SystemTTS(cache_dir=tmp_path, run=fake_say)
-    path = tts.audio_for("배를 깎아 먹었다.")
-    assert path.suffix == ".m4a" and path.read_bytes() == b"m4a-audio"
-    assert calls[0][:3] == ["say", "-v", "Yuna"] and calls[0][-1] == "배를 깎아 먹었다."  # 韩语用韩语音色
+        tts = SystemTTS(cache_dir=tmp_path, run=fake_win)
+        path = tts.audio_for("배를 깎아 먹었다.")
+        assert path.suffix == ".wav" and path.read_bytes() == b"wav-audio"
+        assert calls[0][0] == "powershell" and "ko-KR" in calls[0][-1]
+    else:
+        def fake_say(args, **kwargs):
+            calls.append(args)
+            Path(args[args.index("-o") + 1]).write_bytes(b"m4a-audio")
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        tts = SystemTTS(cache_dir=tmp_path, run=fake_say)
+        path = tts.audio_for("배를 깎아 먹었다.")
+        assert path.suffix == ".m4a" and path.read_bytes() == b"m4a-audio"
+        assert calls[0][:3] == ["say", "-v", "Yuna"] and calls[0][-1] == "배를 깎아 먹었다."  # 韩语用韩语音色
+
     tts.audio_for("배를 깎아 먹었다.")
     assert len(calls) == 1  # 第二次走缓存
 
@@ -142,3 +157,9 @@ def test_local_qwen_tts_loads_the_model_once_and_writes_wav(tmp_path):
     assert calls == [("배를 깎아 먹었다.", "Sohee", "korean"), ("alleviate.", "Aiden", "english")]  # 单词补上句号
     with wave.open(str(path)) as audio:
         assert (audio.getframerate(), audio.getnframes()) == (24000, 3)
+
+
+def test_local_qwen_tts_requires_mac():
+    if sys.platform == "win32":
+        with pytest.raises(TTSError, match="Apple"):
+            QwenLocalTTS()
