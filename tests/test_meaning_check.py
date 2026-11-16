@@ -2,11 +2,13 @@
 import json
 import threading
 
+from dataclasses import replace
+
 import pytest
 
 from cardmaker.dictionary import WIKTIONARY_NAME, DictError, Entry, Sense, supports
 from cardmaker.pipeline import meaning_check
-from cardmaker.pipeline.meaning_check import (check_meanings, flag_ocr_suspects, matches, pick_senses, real_typos,
+from cardmaker.pipeline.meaning_check import (check_meanings, matches, pick_senses, real_typos,
                                               settle_examples)
 from cardmaker.pipeline.result import Card
 from cardmaker.pipeline.runner import GenerateOptions, load_result, run_generation
@@ -77,24 +79,28 @@ def test_single_sense_word_is_verified_without_asking_the_model(template):
     assert cards[0].context["dict_check"]["status"] == "verified"
 
 
+def _non_direct(words=WORDS):
+    return {k: [replace(e, source="其他词典") for e in es] for k, es in words.items()}
+
+
 def test_wrong_sense_is_corrected_from_the_dictionary(template):
-    # 原句说的是吃梨，模型却写成「船」：模型只能在词典义项里选，选了 3（梨）→ 按词典更正
-    cards = [card(template, "배", "船", "배를 깎아 먹었다."), card(template, "배", "梨", "배가 달고 맛있다.")]
-    llm = FakeLLM([choices((0, 3), (1, 3))])
+    # 直查词典对不上释义时，不调用模型，直接换成词典的第一个义项
+    cards = [card(template, "배", "手机", "배를 깎아 먹었다."), card(template, "배", "梨", "배가 달고 맛있다.")]
+    llm = FakeLLM([])
     stats = check_meanings(cards, template, FakeDictionary(), llm)
-    assert stats == {"corrected": 1, "verified": 1}
+    assert stats == {"corrected": 1, "verified": 1} and llm.calls == []
     fixed = cards[0]
-    assert fixed.data["meaning"] == "梨" and fixed.fields["Meaning"] == "名：梨"  # 卡片字段也跟着更新
-    assert fixed.context["dict_check"]["original"] == "船" and fixed.selected
-    prompt = llm.calls[0][1]["content"]
-    assert "배를 깎아 먹었다." in prompt and "배나무의 열매." in prompt  # 原句和词典释义都交给了模型
+    assert fixed.data["meaning"] == "肚子" and fixed.fields["Meaning"] == "名：肚子"
+    assert fixed.context["dict_check"]["original"] == "手机" and fixed.selected
 
 
 def test_no_matching_sense_unchecks_the_card(template):
-    cards = [card(template, "사과", "苹果手机", "사과를 샀다.")]
-    stats = check_meanings(cards, template, FakeDictionary(), FakeLLM([choices((0, 0))]))
-    assert stats == {"unmatched": 1}
-    assert not cards[0].selected and cards[0].context["dict_check"]["deselected"]
+    words = {"사과": [Entry("5", "사과", 1, "명사", [Sense(1, "사과나무의 열매.")])]}
+    cards = [card(template, "사과", "苹果", "사과를 샀다.")]
+    llm = FakeLLM([])
+    stats = check_meanings(cards, template, FakeDictionary(words), llm)
+    assert stats == {"unchecked": 1} and llm.calls == []
+    assert not cards[0].selected and cards[0].context["dict_check"]["status"] == "unchecked"
 
 
 def test_unknown_words_phrases_and_non_korean_words(template):
@@ -131,7 +137,7 @@ def test_dictionary_failure_does_not_break_generation(template):
 
 def test_model_failure_falls_back_to_literal_match(template):
     cards = [card(template, "배", "梨", "배를 먹었다."), card(template, "사과", "香蕉", "사과를 먹었다.")]
-    stats = check_meanings(cards, template, FakeDictionary(), FakeLLM(["不是 JSON"]))
+    stats = check_meanings(cards, template, FakeDictionary(_non_direct()), FakeLLM(["不是 JSON"]))
     assert stats == {"verified": 1, "unmatched": 1}
     assert cards[0].context["dict_check"]["note"] == "未经语境确认"
     assert cards[0].selected and not cards[1].selected  # 字面对上词典的留下，对不上的不能默认进 Anki
@@ -146,20 +152,20 @@ def test_other_meaning_languages_are_held_for_review(template):
 def test_generation_with_dictionary_saves_check_results(make_pdf, template):
     sentence = "배를 깎아 먹었다."
     pdf = make_pdf([f"{sentence} 공유 경제가 빠르게 확산되고 있다."])
-    item = {"word": "배", "surface": "배", "kind": "word", "pos": "名", "meaning": "船", "difficulty": "TOPIK 1级",
+    item = {"word": "배", "surface": "배", "kind": "word", "pos": "名", "meaning": "手机", "difficulty": "TOPIK 1级",
             "source_sentence": sentence}
-    llm = FakeLLM([json.dumps({"items": [item]}, ensure_ascii=False), choices((0, 3))])
+    llm = FakeLLM([json.dumps({"items": [item]}, ensure_ascii=False)])
     store = TaskStore()
     result = run_generation(pdf, template, {}, llm, GenerateOptions(min_chars=5), store=store,
                             dictionary=FakeDictionary())
-    assert result.cards[0].data["meaning"] == "梨"
+    assert result.cards[0].data["meaning"] == "肚子"
     assert any("词典核对释义：已按词典更正 1" in line for line in result.summary_lines())
-    # 核对时调用模型用的 token 也算进任务：生成 1 次 + 选义项 1 次 + 配例句 1 次，每次 150
-    assert result.check_usage.calls == 2 and result.usage.total_tokens == 450
-    assert "其中词典核对：300 token，调用 2 次" in result.summary_text()
+    # 核对时直查词典不调用模型：生成 1 次 + 配例句 1 次，每次 150
+    assert result.check_usage.calls == 1 and result.usage.total_tokens == 300
+    assert "其中词典核对：150 token，调用 1 次" in result.summary_text()
     reloaded, _ = load_result(store, result.task_id)  # 存进数据库，历史记录里也看得到
     assert reloaded.cards[0].context["dict_check"]["status"] == "corrected"
-    assert reloaded.usage.total_tokens == store.get_task(result.task_id).total_tokens == 450
+    assert reloaded.usage.total_tokens == store.get_task(result.task_id).total_tokens == 300
 
 
 def test_cross_language_meanings_are_judged_against_the_dictionary_sense(template):
@@ -197,7 +203,7 @@ def test_local_models_only_compare_literally(template):
 
     cards = [card(template, "배", "船", "배를 깎아 먹었다."), card(template, "학교", "学校", "학교에 간다.")]
     llm = LocalLLM([])
-    stats = check_meanings(cards, template, FakeDictionary(), llm)
+    stats = check_meanings(cards, template, FakeDictionary(_non_direct()), llm)
     assert stats == {"verified": 2} and llm.calls == []
     assert cards[0].data["meaning"] == "船" and cards[0].context["dict_check"]["note"] == "未经语境确认"
 
@@ -212,13 +218,13 @@ def test_wrong_meaning_is_replaced_then_dictionary_example_is_used(template):
     words = {"배": [Entry("2", "배", 2, "명사", [Sense(1, "배를 타다.", "船", example="배를 타고 섬에 갔다.")]),
                     Entry("3", "배", 3, "명사", [Sense(1, "배나무의 열매.", "梨", example="배가 달다.")])]}
     cards = [card(template, "배", "手机", "배가 항구에 도착했다.")]
-    llm = FakeLLM([choices((0, 1))] + replies([{"id": 0, "translation": "坐船去了岛上。"}]))
+    llm = FakeLLM(replies([{"id": 0, "translation": "坐船去了岛上。"}]))
     check_meanings(cards, template, FakeDictionary(words), llm)
     settle_examples(cards, template, FakeDictionary(words), llm)
     fixed = cards[0]
     assert fixed.data["meaning"] == "船" and fixed.data["example"] == "배를 타고 섬에 갔다."
     assert fixed.data["example_translation"] == "坐船去了岛上。" and fixed.selected
-    assert fixed.fields["ExampleLabel"] == "词典例句" and "dictionary_sense" in llm.calls[1][1]["content"]
+    assert fixed.fields["ExampleLabel"] == "词典例句" and "dictionary_sense" in llm.calls[0][1]["content"]
 
 
 def test_model_writes_the_example_from_the_settled_meaning_when_dictionary_has_none(template):
@@ -277,20 +283,10 @@ def test_word_missing_from_the_dictionary_is_reported_and_unchecked(template):
     assert not cards[0].selected and check["status"] == "not_found" and "OCR" in check["note"] and not llm.calls
 
 
-def test_suspected_ocr_errors_are_unchecked_and_keep_the_dictionary_result(template):
-    cards = [card(template, "학교", "学校", "학교에 갓다."), card(template, "학교", "学校", "학교에 갔다.")]
-    cards[0].data["ocr_suspect"] = "갓다→갔다"
-    cards[0].context["dict_check"] = {"status": "verified", "sense": "학교 学校"}
-    flag_ocr_suspects(cards)
-    check = cards[0].context["dict_check"]
-    assert not cards[0].selected and check["status"] == "ocr_suspect" and "갓다→갔다" in check["note"]
-    assert check["sense"] == "학교 学校" and cards[1].selected and "dict_check" not in cards[1].context
-
-
 def test_korean_meanings_are_replaced_with_the_dictionary_definition(template):
     # 韩语→韩语：释义说法不同但意思对就保留；意思不对时直接用词典原话，不用模型写的 fix
-    words = {"절감하다": [Entry("1", "절감하다", 1, "동사", [Sense(1, "매우 크고 강하게 느끼다.", native=True)]),
-                      Entry("2", "절감하다", 2, "동사", [Sense(1, "아껴서 줄이다.", native=True)])]}
+    words = {"절감하다": [Entry("1", "절감하다", 1, "동사", [Sense(1, "매우 크고 강하게 느끼다.", native=True)], source="其他词典"),
+                      Entry("2", "절감하다", 2, "동사", [Sense(1, "아껴서 줄이다.", native=True)], source="其他词典")]}
     sentence = "유지 비용을 절감할 수 있다."
     cards = [card(template, "절감하다", "비용을 줄여서 아끼다.", sentence),
              card(template, "절감하다", "손잡이를 잡다.", sentence)]
@@ -352,6 +348,6 @@ def test_only_real_character_errors_count_as_ocr_typos():
 def test_word_without_a_sentence_is_verified_when_the_meaning_is_a_real_sense(template):
     near = {"가깝다": [Entry("1", "가깝다", 0, "형용사", [Sense(1, "거리가 짧다.", "近"), Sense(2, "친하다.", "亲近，密切")])]}
     hit, miss = card(template, "가깝다", "近"), card(template, "가깝다", "手机")
-    llm = FakeLLM([choices((0, 0))])
-    assert check_meanings([hit, miss], template, FakeDictionary(near), llm) == {"verified": 1, "unmatched": 1}
-    assert hit.selected and not miss.selected and len(llm.calls) == 1  # 对上的不用问模型
+    llm = FakeLLM([])
+    assert check_meanings([hit, miss], template, FakeDictionary(near), llm) == {"verified": 1, "corrected": 1}
+    assert hit.selected and miss.selected and miss.data["meaning"] == "近" and llm.calls == []  # 直查词典直接更正，不问模型

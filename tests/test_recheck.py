@@ -8,7 +8,7 @@ from cardmaker.dictionary import Entry, Sense
 from cardmaker.ingest.pdf import METHOD_OCR, METHOD_TEXT
 from cardmaker.llm.client import FatalLLMError, Usage
 from cardmaker.pipeline import recheck
-from cardmaker.pipeline.meaning_check import flag_ocr_suspects, pending_cards
+from cardmaker.pipeline.meaning_check import pending_cards
 from cardmaker.pipeline.recheck import recheck_cards
 from cardmaker.pipeline.result import Card
 from cardmaker.storage import Chunk, ChunkRecord
@@ -40,7 +40,8 @@ def typo_card(template, word="postpane", meaning="연기하다", kind=None):
     data = {"word": word, "pos": "동", "meaning": meaning, "book_example": f"The event was {word}d.", "ocr_suspect": f"{word}→postpone"}
     if kind:
         data["kind"] = kind
-    return Card(template.render_card_fields(data, {"source": "书"}), data, "1", context={"source": "书"})
+    ctx = {"source": "书"} if word == "postpone" else {"source": "书", "dict_check": {"status": "not_found"}}
+    return Card(template.render_card_fields(data, {"source": "书"}), data, "1", selected=(word == "postpone"), context=ctx)
 
 
 def records(method=METHOD_OCR):
@@ -53,7 +54,6 @@ def read(word, sentence=""):
 
 def run(cards, template, llm, monkeypatch, recs=None, dictionary=None, usage=None):
     monkeypatch.setattr(recheck, "page_image", lambda path, label: b"png")
-    flag_ocr_suspects(cards)
     return recheck_cards(cards, template, recs if recs is not None else records(), "书.pdf", llm,
                          dictionary or FakeDictionary(), "韩语", usage=usage)
 
@@ -109,7 +109,6 @@ def test_text_pages_do_not_send_images(template, monkeypatch):
 
 def test_without_dictionary_nothing_is_released(template):
     card = typo_card(template)
-    flag_ocr_suspects([card])
     assert recheck_cards([card], template, records(), "书.pdf", FakeLLM([]), None) == 0
     assert pending_cards([card]) and card.data["ocr_suspect"]
 

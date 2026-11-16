@@ -99,6 +99,8 @@ Claude、Cursor 这类支持 MCP 的 AI 助手接上以后，直接对它说「�
 - **模板 = 提示词 + 输出结构 + 字段映射**：每个模板一个 YAML 文件（`src/cardmaker/templates/builtin/`），
   输出结构在运行时生成 pydantic 模型做校验，用户选项可以增减要生成的内容。
 - **防编造**：模型给出的原句、书上例句必须能在原文中找到（允许 OCR 造成的细微差异），找不到的直接丢弃。
+- **词典核对（按双语方向分流）**：根据单词语言与释义语言选择词典——韩语词查《韩国语基础词典》（krdict），英→中查本地 ECDICT，英/中→韩先查本地韩语版维基词典、查不到再由 PanLex 兜底，中→英查英语版维基词典。直查词典对不上时直接采用词典第 1 个义项；英韩词典未收录时借 ECDICT 确认单词拼写是否存在（区分词典漏词与 OCR 错字）。离线词典（`ecdict.sqlite`、`kowiktionary.sqlite`、`panlex_ko.sqlite`）放到程序数据目录（macOS 为 `~/Library/Application Support/CardMaker/`，Windows 为 `%APPDATA%/CardMaker/`）即自动生效。
+- **常见排查（krdict 限流）**：使用《韩国语基础词典》时，若遇到连接超时或报错，通常是校园网/共享 IP 请求过频被限流或对方维护，**切换网络（如改连手机热点）后重试**即可；若提示当日 Key 次数用完（010），请更换或等待次日恢复。
 - **并发 + 失败隔离**：线程池同时处理多页；调用失败按指数退避重试（2、4、8 秒，最多 3 次），输出不合格会把错误
   告诉模型让它改；仍失败只标记这一页，不影响其他页。Key 错误等致命错误会立即停止，修好后续传。
 - **断点续传**：SQLite 保存任务、每一页的处理结果和卡片；无论哪页先完成，最后都按书中顺序做原文校验、
@@ -130,9 +132,19 @@ src/cardmaker/
   i18n.py               界面翻译：中文原文当键，i18n_ko.py / i18n_en.py 是韩语、英语翻译表
   gui/                  桌面界面（PySide6）：四步向导、设置窗口、导入 Anki 窗口、后台任务
 tests/                  单元测试（含界面测试，在后台运行不弹窗口）
-scripts/                演示样本生成、macOS 启动器生成
+scripts/                演示样本生成、macOS 启动器生成、离线词典建库脚本（build_ecdict.py / build_kowiktionary.py / build_panlex_ko.py）
 samples/demo/           自己编写的演示样本（无版权问题）；samples/private/ 放真实书籍，不提交
 ```
+
+## 词典数据来源与开源许可证
+
+本项目核对模块使用了以下公开词典与开源数据（均按各自开源/开放条款用于非商业学术研究与学习）：
+
+- **PanLex**（<https://panlex.org>）：**CC BY-NC-SA 4.0**（署名-非商业性使用-相同方式共享 4.0，由 The Long Now Foundation 维护）。本地 `panlex_ko.sqlite` 基于 PanLex 数据整理并保留官方署名要求，仅用于非商业学术与个人学习，禁止商业用途。
+- **ECDICT**（<https://github.com/skywind3000/ECDICT>）：**MIT License**（本地 `ecdict.sqlite` 由 `scripts/build_ecdict.py` 转换提取）。
+- **Wiktionary / kaikki.org**（英语版及韩语版维基词典数据，<https://kaikki.org>）：**CC BY-SA**（`kowiktionary.sqlite` 由 `scripts/build_kowiktionary.py` 转换提取）。
+- **《韩国语基础词典》（한국어기초사전）**：韩国国立国语院开放 API（<https://krdict.korean.go.kr>），按国立国语院开放接口条款使用。
+- **Qota-OCR**：Apache-2.0；**Fluent UI System Icons**：MIT License。
 
 ## 开发计划
 
