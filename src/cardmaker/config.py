@@ -21,17 +21,39 @@ LLM_PRESETS: dict[str, dict] = {
     "dashscope": {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "model": "qwen3.8-flash",
+        "models": ["qwen3.8-flash", "qwen3.7-plus", "qwen3.8-max", "qwen-vl-plus"],
         "extra_body": {"enable_thinking": False},  # Qwen3 系列关闭思考模式，更快更省
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-5.6-luna",
+        "models": ["gpt-5.6-luna", "gpt-6.1-sol", "gpt-6-astra", "gpt-5-mini", "gpt-4o-mini"],
+        "extra_body": {},
+    },
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-3.8-flash",
+        "models": ["gemini-3.8-flash", "gemini-4-hydrogen", "gemini-4-argon", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"],
+        "extra_body": {},
+    },
+    "claude": {
+        "base_url": "https://api.anthropic.com/v1/",
+        "model": "claude-sonnet-5-5",
+        "models": ["claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5", "claude-sonnet-4-6"],
+        "extra_body": {},
+        "json_mode": False,  # Anthropic 兼容层不支持 response_format=json_object，靠提示词输出并由 parse_json_object 解析
     },
     "deepseek": {
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-chat",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
         "extra_body": {},
     },
     # 本地模型：装好 Ollama（ollama.com）、下载模型就能用，不用注册、不要 Key、不花钱（见 llm/client.py 的 OllamaClient）
     "ollama": {
         "base_url": "http://localhost:11434",
         "model": "qwen3.5:2b",  # 8 GB 内存的 Mac 也带得动；4b 会卡死
+        "models": ["qwen3.5:2b", "qwen3.5:4b", "qwen3:8b"],
         "extra_body": {},
     },
 }
@@ -66,11 +88,13 @@ class LLMSettings(BaseModel):
         self.base_url = preset["base_url"]
         self.model = preset["model"]
         self.extra_body = dict(preset["extra_body"])
+        self.json_mode = preset.get("json_mode", True)
 
 
 class OcrSettings(BaseModel):
     langs: list[str] = Field(default_factory=lambda: ["zh", "ko"])  # 参与融合识别的语言模型
     dpi: int = 200
+    use_api: bool = False
 
 
 class TTSSettings(BaseModel):

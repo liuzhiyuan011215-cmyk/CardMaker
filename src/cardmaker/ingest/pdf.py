@@ -13,7 +13,7 @@ import pymupdf
 
 from ..progress import EXTRACT, ProgressEvent, ProgressFn, check_cancel
 from .layout import ocr_text, page_text
-from .ocr import OcrEngine, create_ocr_engine
+from .ocr import OcrEngine, create_ocr_engine, lines_to_text
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +131,11 @@ def extract_pdf(path: Path, pages: list[int] | None = None, ocr_mode: str = "aut
                     ocr_engine = create_ocr_engine(ocr_langs)
                 say(ProgressEvent(EXTRACT, n - 1, len(wanted), f"第 {label} 页是扫描页，正在识别文字…"))
                 image = render_page(page, dpi)
-                text = ocr_text(ocr_engine.recognize(image), image.shape[1])
+                lines = ocr_engine.recognize(image)
+                if ocr_engine.name == "api":
+                    text = lines_to_text(lines)
+                else:
+                    text = ocr_text(lines, image.shape[1])
                 method = METHOD_OCR
                 if quality == "garbled":
                     log.info("第 %d 页文字层是乱码，已改用 OCR", page_no)

@@ -11,8 +11,10 @@ from ..llm.client import check_connection
 from .widgets import StatusLine, label
 from .worker import FunctionTask
 
-PLATFORMS = [("阿里云百炼（通义千问）", "dashscope"), ("DeepSeek", "deepseek"),
-             ("本地模型（Ollama，免费、不用注册）", "ollama"), ("其他（自己填地址和模型）", "custom")]
+PLATFORMS = [("阿里云百炼（通义千问）", "dashscope"), ("OpenAI", "openai"),
+             ("Google Gemini", "gemini"), ("Anthropic Claude", "claude"),
+             ("DeepSeek", "deepseek"), ("本地模型（Ollama，免费、不用注册）", "ollama"),
+             ("其他（自己填地址和模型）", "custom")]
 TTS_ENGINES = [("百炼语音（音质好，用百炼的 Key）", "dashscope"),
                ("本地 Qwen3-TTS（免费、不联网，第一次用自动下载约 1.7 GB）", "qwen_local"),
                ("系统自带语音（免费、不联网、什么都不用装）", "system")]
@@ -50,7 +52,7 @@ class SettingsDialog(QDialog):
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         current = self.settings.llm.api_key
         self.key.setPlaceholderText(tr(f"已设置（{mask_key(current)}）。要更换就在这里粘贴新的"
-                                    if current else "在这里粘贴 API Key（通常以 sk- 开头）"))
+                                    if current else "在这里粘贴 API Key"))
         show = QCheckBox(tr("显示"))
         show.toggled.connect(lambda on: self.key.setEchoMode(
             QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
@@ -60,7 +62,9 @@ class SettingsDialog(QDialog):
         form.addRow("API Key", key_row)
         self.key.setEnabled(self.settings.llm.provider != "ollama")  # 本地模型不要 Key
 
-        self.model = QLineEdit(self.settings.llm.model)
+        self.model = QComboBox()
+        self.model.setEditable(True)
+        self._fill_models(self.platform.currentData(), self.settings.llm.model)
         self.url = QLineEdit(self.settings.llm.base_url)
         form.addRow(tr("模型"), self.model)
         form.addRow(tr("接口地址"), self.url)
@@ -91,6 +95,10 @@ class SettingsDialog(QDialog):
         self.concurrency.setSuffix(tr(" 页"))
         self.concurrency.setToolTip(tr("越大越快；如果经常提示「请求太频繁」，就调小一点"))
         form.addRow(tr("同时处理"), self.concurrency)
+
+        self.api_ocr = QCheckBox(tr("用当前大模型看图识字（适合双栏、斜拍，会多花一点 token）"))
+        self.api_ocr.setChecked(self.settings.ocr.use_api)
+        form.addRow(tr("扫描件 OCR"), self.api_ocr)
 
         self.tts_enabled = QCheckBox(tr("导入 Anki 时给单词和例句配上发音"))
         self.tts_enabled.setChecked(self.settings.tts.enabled)
@@ -142,11 +150,19 @@ class SettingsDialog(QDialog):
         combo.setCurrentIndex(max(0, index))
         return combo
 
+    def _fill_models(self, provider: str, current: str) -> None:
+        self.model.clear()
+        models = list(LLM_PRESETS.get(provider, {}).get("models", []))
+        if current and current not in models:
+            models.insert(0, current)
+        self.model.addItems(models)
+        self.model.setCurrentText(current)
+
     # ------------------------------------------------------------------
     def _platform_changed(self) -> None:
         key = self.platform.currentData()
         if key in LLM_PRESETS:
-            self.model.setText(LLM_PRESETS[key]["model"])
+            self._fill_models(key, LLM_PRESETS[key]["model"])
             self.url.setText(LLM_PRESETS[key]["base_url"])
         self.key.setEnabled(key != "ollama")
         self._enable_prices(key)
@@ -164,8 +180,8 @@ class SettingsDialog(QDialog):
         if provider in LLM_PRESETS:
             llm.apply_preset(provider)
         else:
-            llm.provider, llm.extra_body = "custom", {}
-        llm.model = self.model.text().strip()
+            llm.provider, llm.extra_body, llm.json_mode = "custom", {}, True
+        llm.model = self.model.currentText().strip()
         llm.base_url = self.url.text().strip()
         llm.price_input_per_m, llm.price_output_per_m = self.price_in.value(), self.price_out.value()
         typed, _ = clean_pasted_key(self.key.text())
@@ -199,6 +215,7 @@ class SettingsDialog(QDialog):
         self.settings.meaning_language = self.language.currentData()
         self.settings.ui_language = self.ui_language.currentData()
         self.settings.concurrency = self.concurrency.value()
+        self.settings.ocr.use_api = self.api_ocr.isChecked()
         self.settings.tts.enabled = self.tts_enabled.isChecked()
         self.settings.tts.engine = self.tts_engine.currentData()
         voice = self.voice_ko.currentData()

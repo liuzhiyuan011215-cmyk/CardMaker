@@ -408,6 +408,7 @@ class SourcePage(QWidget):
         settings = load_settings()
         options = GenerateOptions(pages=self.selected_pages(), max_cards=self.max_cards.value(),
                                   ocr_langs=settings.ocr.langs, dpi=settings.ocr.dpi,
+                                  use_api_ocr=settings.ocr.use_api,
                                   concurrency=settings.concurrency, source=template.source,
                                   notes_book=self.book_combo.currentData() if self.book_row.isVisible() else None,
                                   book_title=self.book_title, **settings.llm.billing())

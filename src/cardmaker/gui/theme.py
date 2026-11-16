@@ -15,12 +15,13 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication
 
 from ..config import app_home
@@ -131,11 +132,18 @@ def qpalette(p: Palette) -> QPalette:
     return pal
 
 
+def _font_css() -> tuple[str, str]:
+    if sys.platform == "win32":
+        return '"Segoe UI", "Microsoft YaHei UI", "Malgun Gothic", sans-serif', "Consolas"
+    return '-apple-system, "PingFang SC", "Apple SD Gothic Neo", sans-serif', "Menlo"
+
+
 def stylesheet(p: Palette) -> str:
     a = _write_assets(p)
+    ui_font, mono_font = _font_css()
     return f"""
 * {{ outline: none; }}
-QWidget {{ color: {p.text}; font-size: {BODY}px; }}
+QWidget {{ color: {p.text}; font-family: {ui_font}; font-size: {BODY}px; }}
 QMainWindow {{ background: {p.bg}; }}
 QDialog, QMessageBox {{ background: {p.surface}; }}
 #Page, #PageContent, #Header, #Footer {{ background: transparent; }}
@@ -260,7 +268,7 @@ QSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::up-butto
 QDoubleSpinBox::down-button:hover {{ background: {p.hover}; border-radius: 4px; }}
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url({a["up"]}); width: 10px; height: 10px; }}
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url({a["down"]}); width: 10px; height: 10px; }}
-QPlainTextEdit#Code {{ background: {p.subtle}; font-family: Menlo; font-size: 13px; }}
+QPlainTextEdit#Code {{ background: {p.subtle}; font-family: {mono_font}; font-size: 13px; }}
 
 /* 勾选框：选中是黑底白勾；单选框：选中是黑边加中间一个黑点（深色主题反过来） */
 QCheckBox, QRadioButton {{ spacing: 8px; background: transparent; }}
@@ -374,6 +382,11 @@ class ThemeManager(QObject):
         if self._app is app:
             return
         self._app = app
+        if sys.platform == "win32":
+            font = QFont("Microsoft YaHei UI")
+            font.setFamilies(["Segoe UI", "Microsoft YaHei UI", "Malgun Gothic"])
+            font.setPixelSize(BODY)
+            app.setFont(font)
         mode = str(_prefs().value("theme", "light"))  # 默认浅色：演示、截图时和幻灯片一致
         self.mode = mode if mode in MODES else "light"
         app.styleHints().colorSchemeChanged.connect(self._system_changed)

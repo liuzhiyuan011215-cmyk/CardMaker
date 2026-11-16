@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..ingest.notes import load_notes
+from ..ingest.ocr.api import ApiOCR
 from ..ingest.pdf import DocumentText, extract_pdf, read_text_file
 from ..llm.client import ChatModel, FatalLLMError, Usage
 from ..progress import GENERATE, Cancelled, ProgressEvent, ProgressFn
@@ -39,6 +40,7 @@ class GenerateOptions:
     ocr_mode: str = "auto"
     ocr_langs: list[str] = field(default_factory=lambda: ["zh", "ko"])
     dpi: int = 200
+    use_api_ocr: bool = False
     book_title: str | None = None
     concurrency: int = 1  # 同时处理几页
     source: str = "document"  # document：按页处理；notes：读书笔记，按条分组
@@ -58,13 +60,13 @@ class GenerateOptions:
 
 
 def load_document(path: Path, options: GenerateOptions, progress: ProgressFn,
-                  cancel: threading.Event | None = None) -> DocumentText:
+                  cancel: threading.Event | None = None, ocr_engine=None) -> DocumentText:
     if options.source == "notes":
         return load_notes(path, book=options.notes_book, title=options.book_title)
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         return extract_pdf(path, pages=options.pages, ocr_mode=options.ocr_mode, ocr_langs=options.ocr_langs,
-                           dpi=options.dpi, progress=progress, cancel=cancel)
+                           dpi=options.dpi, ocr_engine=ocr_engine, progress=progress, cancel=cancel)
     if suffix in (".txt", ".md"):
         return read_text_file(path)
     raise ValueError(f"暂不支持的文件类型：{suffix}")
@@ -171,11 +173,13 @@ def make_result(task: TaskInfo, template: Template, records: list[ChunkRecord], 
 
 # ---------------------------------------------------------------------- 任务
 def prepare_task(store: TaskStore, input_path: Path, template: Template, params: dict, options: GenerateOptions,
-                 progress: ProgressFn | None = None, cancel: threading.Event | None = None) -> int:
+                 progress: ProgressFn | None = None, cancel: threading.Event | None = None,
+                 llm: ChatModel | None = None) -> int:
     """提取文字、分块，存成一个新任务（此时还没调用模型）。提取阶段被取消会抛出 Cancelled。"""
     start = time.monotonic()
     params = template.resolve_params(params)
-    doc = load_document(input_path, options, progress or (lambda event: None), cancel)
+    ocr_engine = ApiOCR(llm) if options.use_api_ocr and llm is not None else None
+    doc = load_document(input_path, options, progress or (lambda event: None), cancel, ocr_engine)
     title = options.book_title or doc.title
     chunks = make_chunks(doc, min_chars=0 if options.source == "notes" else options.min_chars)
     task_id = store.create_task(input_path, title, template.id, params, dataclasses.asdict(options), len(doc.pages),
@@ -288,7 +292,7 @@ def run_generation(input_path: Path, template: Template, params: dict, llm: Chat
     options = options or GenerateOptions()
     store = store or TaskStore()
     try:
-        task_id = prepare_task(store, input_path, template, params, options, progress, cancel)
+        task_id = prepare_task(store, input_path, template, params, options, progress, cancel, llm)
     except Cancelled:  # 还在读取文字时就取消了，没有可续传的内容
         return RunResult(input_path, template.id, template.name, template.resolve_params(params),
                          options.book_title or input_path.stem, cancelled=True)
