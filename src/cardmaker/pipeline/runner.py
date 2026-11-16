@@ -25,7 +25,7 @@ from ..storage import (CANCELLED, DONE, FAILED, INCOMPLETE, OK, PENDING, RUNNING
                        TaskStore)
 from ..templates.loader import OutputError, Template, load_template
 from .chunking import Chunk, make_chunks
-from .meaning_check import check_meanings, flag_ocr_suspects, settle_examples
+from .meaning_check import check_meanings,settle_examples
 from .postprocess import add_mcq_options, check_grounding, dedup_key
 from .result import Card, ChunkOutcome, RunResult
 
@@ -269,7 +269,6 @@ def process_task(store: TaskStore, task_id: int, template: Template, llm: ChatMo
         if dictionary is not None:
             check_meanings(cards, template, dictionary, llm, language, say, cancel, usage=check_usage)
         settle_examples(cards, template, dictionary, llm, language, task.params, say, cancel, usage=check_usage)
-        flag_ocr_suspects(cards)
         store.add_check_usage(task_id, check_usage)
     store.save_cards(task_id, cards)
     unfinished = any(r.status in (PENDING, FAILED) for r in records)

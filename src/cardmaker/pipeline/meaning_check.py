@@ -417,14 +417,6 @@ def real_typos(suspect: str) -> str:
     return "；".join(kept)
 
 
-def flag_ocr_suspects(cards: list[Card]) -> None:
-    """分类时模型顺手标出的疑似错字（不多花一次调用）：取消勾选，由用户决定怎么处理，错字不能悄悄进 Anki。"""
-    for card in cards:
-        suspect = real_typos(str(card.data.get("ocr_suspect") or ""))
-        if suspect:
-            card.selected = False
-            old = {k: v for k, v in (card.context.get("dict_check") or {}).items() if k != "status"}
-            _mark(card, OCR_SUSPECT, **{**old, "note": f"疑似 OCR 错字：{suspect}", "deselected": True})
 
 
 def check_status(card: Card) -> str:
