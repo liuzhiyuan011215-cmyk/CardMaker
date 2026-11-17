@@ -245,6 +245,14 @@ def check_meanings(cards: list[Card], template, dictionary, llm: ChatModel | Non
                                 dictionary, meaning_language)] += 1
         done = min(start + BATCH, len(pending))
         say(ProgressEvent(CHECK, done, len(pending), f"正在核对多义词的义项：{done}/{len(pending)}"))
+    total = Counter(c.page_label for c in todo) #同一行一半以上词典都没有，这一页多半被 OCR 识别错了，真词可能是误打误撞不可信
+    missing = Counter(c.page_label for c in todo if check_status(c) == NOT_FOUND)
+    for card in todo:
+        page = card.page_label
+        if card.selected and total[page] >= 3 and missing[page] * 2 >= total[page]:
+            stats[check_status(card)] -= 1
+            stats[_hold(card,OCR_SUSPECT,
+            note = "这一页很多词典里都没有，可能 OCR 整页认错了，已经取消勾选，请选择大模型重新识别")] += 1
     for card in cards:  # 词典管不到的语言、中途取消：没核对过的卡都不能默认进 Anki
         if "dict_check" not in card.context:
             stats[_hold(card, UNCHECKED, note="没有经过词典核对，已取消勾选，请确认")] += 1
