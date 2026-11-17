@@ -305,7 +305,7 @@ def _apply_choice(card: Card, template, spec, senses: list[tuple[Entry, Sense]],
         note="词典里没有符合的义项，已经取消勾选，请核对")            
     entry, sense = senses[choice - 1]
     found = _found(entry, sense)
-    if choice - 1 in hits or not sentence:
+    if choice - 1 in hits or (not sentence and detect_language(meaning) == LANGUAGE_CODES.get(meaning_language)):
         return _mark(card, VERIFIED, **found)
     replacement, note = _translation(sense), ""
     if not replacement:  # 这个义项没有这种语言的译词：看模型对照词典义项的判断
