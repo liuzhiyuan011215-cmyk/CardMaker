@@ -57,7 +57,10 @@ _STRIP = "。.…～~-—「」“”\"'：:"
 
 def glosses(text: str) -> list[str]:
     """释义 → 一个个译词：去掉括号里的补充说明，按逗号、分号、斜杠拆开，统一全角半角和大小写。"""
-    text = unicodedata.normalize("NFKC", _BRACKETS.sub(" ", text or "")).casefold()
+    inner = _BRACKETS.sub(" ",text or "")
+    if not inner.strip():
+        inner = re.sub(r"[（(【\[）)】\]]"," ",text or "")
+    text = unicodedata.normalize("NFKC",inner).casefold()
     out = []
     for part in _SPLIT.split(text):
         english = _LATIN.search(part) and not _CJK.search(part)
@@ -183,7 +186,7 @@ def check_meanings(cards: list[Card], template, dictionary, llm: ChatModel | Non
             break
         senses = pick_senses(entries)
         if not senses:
-            if spec.kind and card.data.get(spec.kind) == "phrase":  # 短语、句型词典里常常没有，不一定是错字
+            if (spec.kind and card.data.get(spec.kind) == "phrase") or " " in lookup_key(word):  # 短语、句型词典里常常没有，不一定是错字
                 stats[_hold(card, UNCHECKED, note="词典里查不到这个短语，意思没有核对，已取消勾选，请确认")] += 1
             elif getattr(dictionary,"known",lambda w: False)(word): #单词没认错，只是词典没收录
                 stats[_hold(card, UNCHECKED,
