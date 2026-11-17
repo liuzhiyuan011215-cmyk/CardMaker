@@ -81,3 +81,10 @@ def test_tail_and_split_long():
     assert len(tail("word " * 100, 50)) <= 50
     parts = split_long("\n".join(["段落" * 20] * 10), 100)
     assert len(parts) > 1 and all(len(p) <= 100 for p in parts)
+
+
+def test_chinese_word_list_is_not_skipped_and_blank_page_is_skipped(make_pdf):
+    seven_words = "\n".join(f"{i}. {w}" for i, w in enumerate(["坚持", "珍惜", "尊重", "理解", "信任", "包容", "鼓励"], 1))
+    doc = extract_pdf(make_pdf([seven_words, "   \n  "]), ocr_mode="never")
+    chunks = make_chunks(doc)  # 默认 min_chars=30，7 个中文双字词+序号去空白 28 字，按中文 2 字算得 42 >= 30
+    assert [(c.page_label, c.skip_reason) for c in chunks] == [("1", ""), ("2", "字数太少")]
