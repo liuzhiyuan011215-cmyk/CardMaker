@@ -17,7 +17,15 @@ class Chunk:
 
 
 def visible_len(text: str) -> int:
-    return len("".join(text.split()))
+    total = 0
+    for ch in text:
+        if ch.isspace():
+            continue
+        if "\u4e00" <= ch <= "\u9fff" or "\uac00" <= ch <= "\ud7a3":
+            total += 2
+        else:
+            total += 1
+    return total
 
 
 def tail(text: str, max_chars: int) -> str:

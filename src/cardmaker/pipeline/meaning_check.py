@@ -7,7 +7,7 @@
    短语、句型词典里常常没有，查不到时标「未经词典核对」并取消勾选。
 2. 这个词只有一个义项，而且释义和词典的译词对得上 → 「一致」，不再多问。
 3. 多义词，或者释义对不上 → 把原句和词典义项（编号 + 释义 + 译词）交给大模型，让它只在这些编号里选，
-   不许自己写（这一步看不到卡片上的释义，免得被它带偏）：
+   不许自己写（有原句时不看卡片上的释义，免得被带偏；没有原句时只能看释义）：
    - 选中的义项就是释义对上的那个 → 「一致」；
    - 选中了别的义项 → 释义换成词典里那个义项的译词，标「已按词典更正」，原来的释义留着备查；
    - 选中的义项没有这种语言的译词（例如维基词典只有英语释义）→ 再请模型对照这个义项判断释义对不对，
@@ -97,7 +97,8 @@ def matches(meaning: str, sense: Sense) -> bool:
 
 # ---------------------------------------------------------------------- 让模型在义项里选
 CHOOSER_SYSTEM = ("你是词典义项判断助手。根据原句，判断每个单词在句中用的是词典里的哪个义项。"
-                  "只能从给出的编号里选一个；都不符合就填 0。不要解释，只输出一个 json 对象。")
+                  "没有原句时，看 meaning 和哪个义项意思相同，说法不同也算。"
+                  "只能从给出的编号里面选一个；都不符合就填 0.不要解释，只能输出一个 json 对象。")
 
 
 def choose_senses(llm: ChatModel, jobs: list[dict]) -> dict[int, int]:
@@ -198,23 +199,14 @@ def check_meanings(cards: list[Card], template, dictionary, llm: ChatModel | Non
             senses = [(e,s if s.trans_word else replace(s,trans_word=s.definition)) for e,s in senses]
         hits = [i for i, (_, s) in enumerate(senses) if matches(meaning, s)]
         sentence = str(card.data.get(spec.sentence) or "") if spec.sentence else ""
-        first = next((x for x in senses if x[1].trans_word),None)
-        if senses[0][0].source in DIRECT_SOURCES or meaning_language == "英语": 
-            if hits:
-                _mark(card, VERIFIED, **_found(*senses[hits[0]]))
-                stats[VERIFIED] += 1
-            elif first is None:
-                stats[_hold(card, UNCHECKED, note="词典里没有这种语言的释义，已取消勾选，请确认释义")] += 1
-            else:
-                card.data[spec.meaning] = first[1].trans_word
-                card.fields = template.render_card_fields(card.data, card.context)
-                stats[_mark(card, CORRECTED, **_found(*first), original=meaning,
-                            note="释义和词典对不上，已换成词典的第一个义项")] += 1
-        elif hits and (len(senses) == 1 or not sentence):
-            _mark(card, VERIFIED, **_found(*senses[hits[0]]))
-            stats[VERIFIED] += 1
+        direct = senses[0][0].source in DIRECT_SOURCES or meaning_language == "英语"
+        if direct and not any(s.trans_word for _,s in senses):
+            stats[_hold(card,UNCHECKED,
+            note="词典里面没有这种语言的释义，已经取消勾选，请确认释义")] +=1
+        elif hits and (direct or len(senses) == 1 or not sentence):
+            stats[_mark(card,VERIFIED,**_found(*senses[hits[0]]))]+= 1
         else:
-            pending.append((card, senses, hits))
+            pending.append((card,senses,hits))
         if n % 10 == 0 or n == len(todo):
             say(ProgressEvent(CHECK, n, len(todo), f"正在用词典核对释义：{n}/{len(todo)}"))
 
@@ -227,6 +219,9 @@ def check_meanings(cards: list[Card], template, dictionary, llm: ChatModel | Non
                  "senses": [{"n": i + 1, "definition": s.definition, "translation": s.trans_word}
                             for i, (_, s) in enumerate(senses)]}
                 for k, (card, senses, _) in enumerate(batch)]
+        for k, (card,_,_) in enumerate(batch):
+            if not jobs[k]["sentence"]:
+                jobs[k]["meaning"] = str(card.data.get(spec.meaning) or "")
         try:
             choices = choose_senses(llm, jobs) if llm is not None else {}
         except Exception as exc:  # 选义项失败不影响出卡：退回只看字面是否对得上
@@ -236,7 +231,7 @@ def check_meanings(cards: list[Card], template, dictionary, llm: ChatModel | Non
         unclear = [{**{key: job[key] for key in ("id", "word", "sentence")},
                     "sense": senses[choices[k] - 1][1].definition, "meaning": str(card.data.get(spec.meaning) or "")}
                    for k, (job, (card, senses, hits)) in enumerate(zip(jobs, batch))
-                   if choices.get(k) and choices[k] - 1 not in hits and not _translation(senses[choices[k] - 1][1])]
+                   if choices.get(k) and choices[k] - 1 not in hits and not _translation(senses[choices[k] - 1][1]) and job["sentence"]]
         verdicts = {}
         if unclear:
             try:
@@ -288,6 +283,7 @@ def _apply_choice(card: Card, template, spec, senses: list[tuple[Entry, Sense]],
                   choice: int | None, verdict: dict | None = None, dictionary=None,
                   meaning_language: str = "中文") -> str:
     meaning = str(card.data.get(spec.meaning) or "")
+    sentence = str(card.data.get(spec.sentence) or "") if spec.sentence else ""
     if choice is None:  # 模型没给出选择：只能看字面
         if hits:
             return _mark(card, VERIFIED, **_found(*senses[hits[0]]), note="未经语境确认")
@@ -295,10 +291,21 @@ def _apply_choice(card: Card, template, spec, senses: list[tuple[Entry, Sense]],
             return _hold(card, ERROR, note="词典只有英语释义，需要大模型对照，这次没有核对")
         return _hold(card, UNMATCHED, note="释义和词典的义项都对不上")
     if choice == 0:
-        return _hold(card, UNMATCHED, note="词典里没有符合原句的义项，已取消勾选，请核对")
+        if sentence:
+            return _hold(card, UNMATCHED,
+            note="词典里没有符合原句的义项，已经取消勾选，请核对")
+        for entry,sense in senses:
+            if _translation(sense):
+                card.data[spec.meaning] = _translation(sense)
+                card.fields = template.render_card_fields(card.data,card.context)
+                return _mark(card,CORRECTED,**_found(entry,sense),
+                original=meaning,
+                note="释义和词典对不上，已换成词典的第一个义项")
+        return _hold(card,UNMATCHED,
+        note="词典里没有符合的义项，已经取消勾选，请核对")            
     entry, sense = senses[choice - 1]
     found = _found(entry, sense)
-    if choice - 1 in hits:
+    if choice - 1 in hits or not sentence:
         return _mark(card, VERIFIED, **found)
     replacement, note = _translation(sense), ""
     if not replacement:  # 这个义项没有这种语言的译词：看模型对照词典义项的判断
