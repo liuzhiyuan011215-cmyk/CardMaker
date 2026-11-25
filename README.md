@@ -71,6 +71,17 @@ python -m venv .venv
   - Windows: `%LOCALAPPDATA%\CardMaker\`
   - macOS: `~/Library/Application Support/CardMaker/`
 - 설정 파일(`config.yaml`, API Key 포함)은 위 데이터 폴더에 저장되며 Git 저장소에 포함되지 않습니다.
+- **처음 설정**: 앱의 「설정」 창에서 LLM 제공자와 API Key를 입력하면 `config.yaml`이 자동으로 만들어집니다. Anki로 바로 보내려면 Anki에 [AnkiConnect](https://ankiweb.net/shared/info/2055492159) 애드온을 설치하고 Anki를 켜 두세요(없으면 `.apkg` 파일로 내보내기).
+- **오프라인 사전 만들기** (선택, 원본 데이터를 받은 뒤 변환):
+  ```bash
+  # ECDICT: github.com/skywind3000/ECDICT 의 ecdict.csv
+  python scripts/build_ecdict.py ecdict.csv
+  # 한국어 위키낱말사전: kaikki.org 의 raw-wiktextract-data.jsonl.gz (한국어판)
+  python scripts/build_kowiktionary.py raw-wiktextract-data.jsonl.gz kowiktionary.sqlite
+  # PanLex: panlex.org 덤프의 kor/eng/cmn TSV
+  python scripts/build_panlex_ko.py kor.tsv eng.tsv cmn.tsv panlex_ko.sqlite
+  ```
+  만든 파일을 위 데이터 폴더에 넣으면 됩니다.
 
 ### 사전 데이터 출처 및 라이선스
 - **ECDICT**: MIT License (`skywind3000/ECDICT`)
@@ -125,4 +136,6 @@ python -m venv .venv
   - Windows：`%LOCALAPPDATA%\CardMaker\`
   - macOS：`~/Library/Application Support/CardMaker/`
 - 配置文件（`config.yaml`，含 API Key）保存在上述用户数据目录中，不会进入 Git 仓库。
+- **首次设置**：在应用的「设置」窗口里填写大模型提供方和 API Key，会自动生成 `config.yaml`。要直接导入 Anki，请在 Anki 安装 [AnkiConnect](https://ankiweb.net/shared/info/2055492159) 插件并保持 Anki 打开（否则可导出 `.apkg`）。
+- **离线词典生成**（可选）：下载原始数据后运行 `scripts/build_ecdict.py`、`scripts/build_kowiktionary.py`、`scripts/build_panlex_ko.py`（用法同上），把生成的文件放进上述数据目录即可。
 - 也支持命令行（`cardmaker generate / extract / tasks / resume`）及标准库实现的 MCP 服务（`python -m cardmaker.mcp_server`）。
